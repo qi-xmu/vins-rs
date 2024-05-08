@@ -16,3 +16,6 @@ default = [
     "opencv/video",
     "opencv/highgui",
 ]
+
+[build-dependencies]
+build-target = "0.4.0"

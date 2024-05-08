@@ -37,7 +37,7 @@ fn read_csv(path: &Path) -> Vec<(f64, String)> {
 }
 
 fn main() {
-    let path = "/home/qi/V201/mav0/cam0/";
+    let path = "/Users/qi/Resourse/Dataset/V201/mav0/cam0/";
     let path = Path::new(path);
     let list = read_csv(path);
 
