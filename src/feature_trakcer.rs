@@ -58,7 +58,10 @@ where
     }
 
     fn set_mask(&mut self) {
-        let mask = Mat::zeros(self.row, self.col, CV_8UC1).unwrap();
+        // let mask = Mat::zeros(self.row, self.col, CV_8UC1).unwrap();
+        let mut mask =
+            Mat::new_rows_cols_with_default(self.row, self.col, CV_8UC1, Scalar::from(255))
+                .unwrap();
         let mut cnt_pts_id = vec![];
 
         for i in 0..self.cur_pts.len() {
@@ -74,14 +77,24 @@ where
         self.ids.clear();
         self.track_cnt.clear();
 
-        // for it in cnt_pts_id.iter() {
-        //     mask.
-
-        // //     // if (mask.)
-        // }
+        for it in cnt_pts_id.iter() {
+            //
+            let it_pt = Point2i::new(it.1.x as i32, it.1.y as i32);
+            let m: &u8 = mask.at_2d(it_pt.x, it_pt.y).unwrap();
+            if *m == 255 {
+                self.track_cnt.push(it.0);
+                self.cur_pts.push(it.1);
+                self.ids.push(it.2);
+                opencv::imgproc::circle(&mut mask, it_pt, MIN_DIST, Scalar::from(0), 0, LINE_8, 0)
+                    .unwrap();
+            }
+        }
+        // 设置 mask
+        self.mask = mask;
     }
 
     /// 删除状态为0的点。
+    #[inline]
     fn reduce_vector_point(v: &Vector<Point2f>, status: &Vector<u8>) -> Vector<Point2f> {
         status
             .iter()
@@ -97,6 +110,7 @@ where
         //     .collect::<Vector<Point2f>>()
     }
 
+    #[inline]
     fn reduce_vector_i32(v: &Vector<i32>, status: &Vector<u8>) -> Vector<i32> {
         status
             .iter()
@@ -107,6 +121,7 @@ where
     }
 
     /// 判断点是否在图像边界内。
+    #[inline]
     fn in_border(&self, pt: &Point2f) -> bool {
         const BORDER_SIZE: i32 = 1;
         let img_x = pt.x.round() as i32;
@@ -124,6 +139,7 @@ where
         (dx * dx + dy * dy).sqrt()
     }
 
+    #[inline]
     fn undistorted_pts(&self, pts: &Vector<Point2f>, cam: &impl CameraTrait) -> Vector<Point2f> {
         let mut undistorted_pts = Vector::<Point2f>::new();
         for pt in pts.iter() {
@@ -172,6 +188,7 @@ where
         pts_velocity
     }
 
+    #[inline]
     fn draw_track(&self) -> Mat {
         let mut img_track = self.cur_img.clone();
         opencv::imgproc::cvt_color(&self.cur_img, &mut img_track, COLOR_GRAY2BGR, 0).unwrap();
@@ -308,7 +325,6 @@ where
                 .collect();
 
             // TODO: reduceVector
-
             self.prev_pts = Self::reduce_vector_point(&self.prev_pts, &status);
             self.cur_pts = Self::reduce_vector_point(&self.cur_pts, &status);
             self.ids = Self::reduce_vector_i32(&self.ids, &status);
@@ -324,7 +340,7 @@ where
 
         //
         if true {
-            // self.set_mask();
+            self.set_mask();
             let n_max_cnt = MAX_CNT - self.cur_pts.len() as i32;
             if n_max_cnt > 0 {
                 if self.mask.empty() {
@@ -339,7 +355,7 @@ where
                     &mut self.n_pts,
                     n_max_cnt,
                     0.01,
-                    MIN_DIST, // TODO
+                    MIN_DIST as f64,
                     &self.mask,
                     3,
                     false,
