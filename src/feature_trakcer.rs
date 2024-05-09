@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, os::macos::raw::stat};
 
 use crate::{camera::CameraTrait, config::*};
 use opencv::{
@@ -37,18 +37,29 @@ where
     //
     n_id: i32,
     ids: Vector<i32>,
+    /// track count: 记录每一个特征点被跟踪的次数。
     track_cnt: Vector<i32>,
     // image size
     row: i32,
     col: i32,
     // camera
-    m_camera: Camera,
+    camera: Camera,
 }
 
 impl<Camera> FeatureTracker<Camera>
 where
     Camera: CameraTrait,
 {
+    pub fn new_with_camera(camera: Camera) -> Self {
+        Self {
+            n_id: 0,
+            camera: camera,
+            has_predicted: false,
+            ..Default::default()
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             n_id: 0,
@@ -71,21 +82,21 @@ where
                 self.ids.get(i).unwrap(),
             ))
         }
-        cnt_pts_id.sort_by(|x, y| x.0.cmp(&y.0));
+        // 按照 track_cnt 降序排列
+        cnt_pts_id.sort_by(|x, y| y.0.cmp(&x.0));
 
+        self.track_cnt.clear();
         self.cur_pts.clear();
         self.ids.clear();
-        self.track_cnt.clear();
 
         for it in cnt_pts_id.iter() {
-            //
             let it_pt = Point2i::new(it.1.x as i32, it.1.y as i32);
-            let m: &u8 = mask.at_2d(it_pt.x, it_pt.y).unwrap();
+            let m: &u8 = mask.at_2d(it_pt.y, it_pt.x).unwrap();
             if *m == 255 {
                 self.track_cnt.push(it.0);
                 self.cur_pts.push(it.1);
                 self.ids.push(it.2);
-                opencv::imgproc::circle(&mut mask, it_pt, MIN_DIST, Scalar::from(0), 0, LINE_8, 0)
+                opencv::imgproc::circle(&mut mask, it_pt, MIN_DIST, Scalar::from(0), -1, LINE_8, 0)
                     .unwrap();
             }
         }
@@ -95,11 +106,11 @@ where
 
     /// 删除状态为0的点。
     #[inline]
-    fn reduce_vector_point(v: &Vector<Point2f>, status: &Vector<u8>) -> Vector<Point2f> {
+    fn reduce_vector_point(v: &Vector<Point2f>, status: &Vector<bool>) -> Vector<Point2f> {
         status
             .iter()
             .zip(v.iter())
-            .filter(|(state, _)| *state != 0)
+            .filter(|(state, _)| *state)
             .map(|(_, p)| p)
             .collect()
 
@@ -111,11 +122,11 @@ where
     }
 
     #[inline]
-    fn reduce_vector_i32(v: &Vector<i32>, status: &Vector<u8>) -> Vector<i32> {
+    fn reduce_vector_i32(v: &Vector<i32>, status: &Vector<bool>) -> Vector<i32> {
         status
             .iter()
             .zip(v.iter())
-            .filter(|(state, _)| *state != 0)
+            .filter(|(state, _)| *state)
             .map(|(_, p)| p)
             .collect()
     }
@@ -133,9 +144,13 @@ where
             && img_y < self.row - BORDER_SIZE
     }
 
+    /// 计算两个点之间的欧几里得距离。
+    #[inline]
     fn distance(a: &Point2f, b: &Point2f) -> f32 {
+        // 计算两点在 x 轴和 y 轴上的差值
         let dx = a.x - b.x;
         let dy = a.y - b.y;
+        // 计算并返回两点间的距离
         (dx * dx + dy * dy).sqrt()
     }
 
@@ -235,6 +250,7 @@ where
     }
 
     pub fn track_image(&mut self, _cur_time: f64, img: &Mat) -> FeatureFrame {
+        log::info!("timestamp={}", _cur_time);
         self.cur_time = _cur_time; // 当前时间
         self.cur_img = img.clone(); // 当前图像
         self.row = img.rows(); // 图像行数
@@ -265,8 +281,8 @@ where
                     &mut self.cur_pts,
                     &mut status,
                     &mut err,
-                    Size::new(11, 11),
-                    3,
+                    Size::new(21, 21),
+                    1,
                     criteria,
                     opencv::video::OPTFLOW_USE_INITIAL_FLOW,
                     1e-4,
@@ -286,10 +302,10 @@ where
                         &mut self.cur_pts,
                         &mut status,
                         &mut err,
-                        Size::new(11, 11),
+                        Size::new(21, 21),
                         3,
                         TermCriteria::default().unwrap(),
-                        0,
+                        opencv::video::DISOpticalFlow_PRESET_ULTRAFAST,
                         1e-4,
                     )
                     .unwrap();
@@ -302,29 +318,61 @@ where
                     &mut self.cur_pts,
                     &mut status,
                     &mut err,
-                    Size::new(11, 11),
+                    Size::new(21, 21),
                     3,
                     TermCriteria::default().unwrap(),
-                    0,
+                    opencv::video::DISOpticalFlow_PRESET_ULTRAFAST,
                     1e-4,
                 )
                 .unwrap();
             }
-            //  其他
-            for i in 0..self.cur_pts.len() {
-                if status.get(i).unwrap() != 0 && false {
-                    status.set(i, 0).unwrap();
-                }
-            }
 
-            // TODO: in_border
+            // [x] reverse check --> Vector<u8>
+            let status = if FLOW_BACK {
+                let mut reverse_status = Vector::<u8>::new();
+                let mut reverse_pts = self.prev_pts.clone();
+                opencv::video::calc_optical_flow_pyr_lk(
+                    &self.cur_img,
+                    &self.prev_img,
+                    &self.cur_pts,
+                    &mut reverse_pts,
+                    &mut reverse_status,
+                    &mut err,
+                    Size::new(11, 11),
+                    1,
+                    TermCriteria::default().unwrap(),
+                    opencv::video::OPTFLOW_USE_INITIAL_FLOW,
+                    1e-4,
+                )
+                .unwrap();
+
+                for i in 0..status.len() {
+                    let val = if status.get(i).unwrap() != 0
+                        && reverse_status.get(i).unwrap() != 0
+                        && Self::distance(
+                            &self.prev_pts.get(i).unwrap(),
+                            &reverse_pts.get(i).unwrap(),
+                        ) <= 0.5
+                    {
+                        1
+                    } else {
+                        0
+                    };
+                    status.set(i, val).unwrap();
+                }
+                status
+            } else {
+                status
+            };
+
+            // [x] in_border
             let status = status
                 .iter()
                 .zip(self.cur_pts.iter())
-                .map(|(s, pt)| if s != 0 && !self.in_border(&pt) { 0 } else { s })
+                .map(|(s, pt)| s != 0 && self.in_border(&pt))
                 .collect();
 
-            // TODO: reduceVector
+            // [x] reduceVector
             self.prev_pts = Self::reduce_vector_point(&self.prev_pts, &status);
             self.cur_pts = Self::reduce_vector_point(&self.cur_pts, &status);
             self.ids = Self::reduce_vector_i32(&self.ids, &status);
@@ -338,22 +386,22 @@ where
             .map(|x| x + 1)
             .collect::<Vector<i32>>();
 
-        //
+        // 计算预测点
         if true {
-            self.set_mask();
+            // 检查是否需要添加新的特征点
             let n_max_cnt = MAX_CNT - self.cur_pts.len() as i32;
             if n_max_cnt > 0 {
+                self.set_mask();
                 if self.mask.empty() {
-                    println!("mask is empty");
+                    log::warn!("mask is empty");
                 }
                 if self.mask.typ() != CV_8UC1 {
-                    println!("mask is not CV_8UC1");
+                    log::warn!("mask is not CV_8UC1");
                 }
-                // goodFeaturesToTrack --> n_pts
                 opencv::imgproc::good_features_to_track(
                     &self.cur_img,
                     &mut self.n_pts,
-                    n_max_cnt,
+                    n_max_cnt, // 最大识别的特征点数量
                     0.01,
                     MIN_DIST as f64,
                     &self.mask,
@@ -367,15 +415,15 @@ where
             }
 
             for p in self.n_pts.iter() {
+                self.track_cnt.push(1);
                 self.cur_pts.push(p);
                 self.ids.push(self.n_id);
                 self.n_id += 1;
-                self.track_cnt.push(1);
             }
         }
-
-        self.cur_un_pts = self.undistorted_pts(&self.cur_pts, &self.m_camera);
-        // TODO: ptsVelocity
+        // [x] undistortedPts
+        self.cur_un_pts = self.undistorted_pts(&self.cur_pts, &self.camera);
+        // [x] ptsVelocity
         Self::pts_velocity(
             self.cur_time - self.prev_time,
             &self.ids,
@@ -383,18 +431,18 @@ where
             &mut self.cur_un_pts_map,
             &self.prev_un_pts_map,
         );
-        // TODO: drawTrack
+        // [x] drawTrack
         self.img_track = self.draw_track();
 
+        // clone to next
         self.prev_img = self.cur_img.clone();
         self.prev_pts = self.cur_pts.clone();
         self.prev_un_pts = self.cur_un_pts.clone();
         self.prev_time = self.cur_time;
         self.has_predicted = false;
 
-        self.prev_left_pts_map.clear();
-
         // HashMap
+        self.prev_left_pts_map.clear();
         self.ids.iter().zip(self.cur_pts.iter()).for_each(|(k, v)| {
             self.prev_left_pts_map.insert(k, v);
         });

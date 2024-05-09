@@ -11,7 +11,6 @@ mod feature_trakcer;
 use std::io::BufRead;
 use std::path::Path;
 
-use camera::MyCamera;
 use opencv::core::MatTraitConst;
 use opencv::highgui;
 use opencv::imgcodecs;
@@ -37,11 +36,19 @@ fn read_csv(path: &Path) -> Vec<(f64, String)> {
 }
 
 fn main() {
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .format_timestamp_nanos()
+        .init();
+
     let path = "/Users/qi/Resourse/Dataset/V201/mav0/cam0/";
+    let camera_file = "configs/cam0_pinhole.yaml";
     let path = Path::new(path);
+    log::info!("path: {:?}", path);
     let list = read_csv(path);
 
-    let mut feature_tracker = feature_trakcer::FeatureTracker::<MyCamera>::new();
+    let camera = camera::PinholeCamera::new(camera_file);
+    let mut feature_tracker = feature_trakcer::FeatureTracker::new_with_camera(camera);
 
     const FREQUENCY: i32 = 30;
     let path = path.join("data");
@@ -51,16 +58,13 @@ fn main() {
 
         let _img = imgcodecs::imread(path, imgcodecs::IMREAD_GRAYSCALE).unwrap();
         if _img.empty() {
-            println!("empty image");
+            log::error!("empty image");
             continue;
         }
         feature_tracker.track_image(timestamp, &_img);
 
         let img = feature_tracker.get_track_image().clone();
 
-        // 拼接
-        // let show_image = Mat::zeros(_img.rows(), _img.cols() )
-        // opencv::core::hconcat2(, src2, dst)
         highgui::imshow("Raw", &_img).unwrap();
         highgui::imshow("Tracker", &img).unwrap();
         highgui::wait_key(1000 / FREQUENCY).unwrap();
