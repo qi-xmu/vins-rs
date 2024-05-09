@@ -459,7 +459,7 @@ where
             let veloctiry_y = pts_velocity.get(i).unwrap().y;
             let ff = PointFeature {
                 camera_id: 0,
-                un_xyz: (x, y, z),
+                point: (x, y, z),
                 uv: (p_u, p_v),
                 velocity: (veloctiry_x, veloctiry_y),
             };
@@ -479,19 +479,23 @@ where
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct PointFeature {
+    /// 相机id
     pub camera_id: u8,
-    pub un_xyz: (f32, f32, f32),
+    /// 投影到归一化平面的坐标
+    pub point: (f32, f32, f32),
+    /// 图像坐标
     pub uv: (f32, f32),
+    /// 速度
     pub velocity: (f32, f32),
 }
 
-pub type FeatureFrameMap = HashMap<i32, PointFeature>;
+pub type PointFeatureMap = HashMap<i32, PointFeature>;
 
 #[derive(Debug, Default)]
 pub struct FeatureFrame {
     pub timestamp: f64,
-    pub data: FeatureFrameMap,
+    pub data: PointFeatureMap,
     pub image: (Mat, Mat),
 }

@@ -1,10 +1,10 @@
-use crate::feature_trakcer::FeatureFrameMap;
+use crate::feature_trakcer::PointFeatureMap;
 
 #[derive(Debug, Default)]
 pub struct ImageFrame {
     pub timestamp: f64,
     pub is_key_frame: bool,
-    pub points: FeatureFrameMap,
+    pub points: PointFeatureMap,
 
     /// 旋转矩阵
     pub R: nalgebra::Matrix3<f64>,
@@ -14,7 +14,7 @@ pub struct ImageFrame {
 
 impl ImageFrame {
     #[allow(dead_code)]
-    pub fn new(timestamp: f64, points: FeatureFrameMap) -> Self {
+    pub fn new(timestamp: f64, points: PointFeatureMap) -> Self {
         Self {
             timestamp,
             points,

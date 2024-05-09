@@ -3,10 +3,20 @@ mod image_frame;
 use std::collections::VecDeque;
 
 use crate::config::*;
+use crate::feature_manager::FeatureManager;
 use crate::feature_trakcer::FeatureFrame;
 use crate::{camera::CameraTrait, feature_trakcer::FeatureTracker};
 
 use opencv::core::Mat;
+
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+enum MarginalizationFlag {
+    #[default]
+    MarginOld,
+    /// MARGIN_SECOND_NEW
+    MarginSecondNew,
+}
 
 #[derive(Debug, Default)]
 pub struct Estimator<Camera>
@@ -25,12 +35,18 @@ where
     pub gyro_buf: VecDeque<(f64, [f64; 3])>,
 
     // Frame
-    pub frame_count: usize,
+    pub frame_count: i32,
     pub images: [(Mat, Mat); (WINDOW_SIZE + 1) as usize],
 
     // FeatureTracker
     feature_tracker: FeatureTracker<Camera>,
     feature_frame_buf: VecDeque<FeatureFrame>,
+
+    // FeatureManager
+    feature_manager: FeatureManager,
+
+    // MarginalizationFlag
+    pub marginalization_flag: MarginalizationFlag,
 }
 
 impl<Camera> Estimator<Camera>
@@ -55,8 +71,18 @@ where
     fn process_image(&mut self, frame: FeatureFrame, cur_img: &Mat, img_tracker: &Mat) {
         log::info!("process_image");
         //
-        self.images[self.frame_count] = frame.image.clone();
+        self.images[self.frame_count as usize] = frame.image.clone();
         // TODO:addFeatureCheckParallax
+        if self
+            .feature_manager
+            .add_feature_check_parallax(self.frame_count, &frame.data, self.td)
+        {
+            self.marginalization_flag = MarginalizationFlag::MarginOld;
+        } else {
+            self.marginalization_flag = MarginalizationFlag::MarginSecondNew;
+        };
+
+        //
     }
 
     #[inline]
