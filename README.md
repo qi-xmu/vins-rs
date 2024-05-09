@@ -7,6 +7,7 @@ This is a Rust implementation of the VINS algorithm. The original implementation
 # 目标
 
 - [x] 实现特征识别和追踪 (Feature detection and tracking) 2024/05/08
+- [x] Pinhole相机模型 (Pinhole camera model) 2024/05/09
 - [ ] 实现IMU预积分 (IMU preintegration)
 
 # Dependencies
