@@ -1,4 +1,4 @@
-use std::{collections::HashMap, os::macos::raw::stat};
+use std::collections::HashMap;
 
 use crate::{camera::CameraTrait, config::*};
 use opencv::{
@@ -161,10 +161,9 @@ where
             let x = pt.x;
             let y = pt.y;
             let p = Point2d::new(x as f64, y as f64);
-            let mut p3d = Point3d::default();
-            cam.lift_projective(&p, &mut p3d);
-
-            undistorted_pts.push(Point2f::new(x, y));
+            let p3d = cam.lift_projective(&p);
+            let new_pt = Point2f::new((p3d.x / p3d.z) as f32, (p3d.y / p3d.z) as f32);
+            undistorted_pts.push(new_pt);
         }
         undistorted_pts
     }

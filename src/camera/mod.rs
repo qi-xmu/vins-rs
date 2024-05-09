@@ -36,9 +36,8 @@ pub enum CameraType {
 
 /// 相机的trait
 pub trait CameraTrait: Default {
-    fn lift_projective(&self, p: &Point2d, p3d: &mut Point3d);
+    fn lift_projective(&self, p: &Point2d) -> Point3d;
     fn get_camera_type(&self) -> CameraType;
-    // fn read_parameters(&mut self);
 }
 
 /// 相机参数的trait

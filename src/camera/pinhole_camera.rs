@@ -1,5 +1,7 @@
 use opencv::core::{FileNodeTraitConst, FileStorageTrait, FileStorageTraitConst};
 
+use opencv::core::{Point2d, Point3d};
+
 use super::{CameraParametersTrait, CameraTrait};
 
 #[derive(Debug, Default)]
@@ -122,15 +124,47 @@ impl PinholeCamera {
             ..Default::default()
         }
     }
+
+    #[inline]
+    fn distortion(&self, p_u: (f64, f64)) -> (f64, f64) {
+        //
+        let k1 = self.parameters.k1;
+        let k2 = self.parameters.k2;
+        let p1 = self.parameters.p1;
+        let p2 = self.parameters.p2;
+
+        //
+        let mx2_u = p_u.0 * p_u.0;
+        let my2_u = p_u.1 * p_u.1;
+        let mxy_u = p_u.0 * p_u.1;
+        let rho2_u = mx2_u + my2_u;
+        let rad_dist_u = k1 * rho2_u + k2 * rho2_u * rho2_u;
+        let dx_u = p_u.0 * rad_dist_u + 2.0 * p1 * mxy_u + p2 * (rho2_u + 2.0 * mx2_u);
+        let dy_u = p_u.1 * rad_dist_u + 2.0 * p2 * mxy_u + p1 * (rho2_u + 2.0 * my2_u);
+
+        (dx_u, dy_u)
+    }
 }
 
 impl CameraTrait for PinholeCamera {
-    fn lift_projective(&self, p: &opencv::core::Point2d, p3d: &mut opencv::core::Point3d) {
-        let x = (p.x - self.parameters.cx) / self.parameters.fx;
-        let y = (p.y - self.parameters.cy) / self.parameters.fy;
-        p3d.x = x;
-        p3d.y = y;
-        p3d.z = 1.0;
+    fn lift_projective(&self, p: &Point2d) -> Point3d {
+        // 归一化坐标
+        let mx_d = self.inv_k11 * p.x + self.inv_k13;
+        let my_d = self.inv_k22 * p.y + self.inv_k23;
+
+        let (mx_u, my_u) = if !self.has_distortion {
+            (mx_d, my_d)
+        } else {
+            let mut mx_u = mx_d;
+            let mut my_u = my_d;
+            for _ in 0..8 {
+                let d_u = self.distortion((mx_u, my_u));
+                mx_u = mx_d - d_u.0;
+                my_u = my_d - d_u.1;
+            }
+            (mx_u, my_u)
+        };
+        Point3d::new(mx_u, my_u, 1.0)
     }
 
     fn get_camera_type(&self) -> super::CameraType {
