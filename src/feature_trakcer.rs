@@ -423,7 +423,7 @@ where
         // [x] undistortedPts
         self.cur_un_pts = self.undistorted_pts(&self.cur_pts, &self.camera);
         // [x] ptsVelocity
-        Self::pts_velocity(
+        let pts_velocity = Self::pts_velocity(
             self.cur_time - self.prev_time,
             &self.ids,
             &self.cur_pts,
@@ -446,8 +446,32 @@ where
             self.prev_left_pts_map.insert(k, v);
         });
 
-        let feature_frame = FeatureFrame(0f64, 0f64, 0f64);
-        return feature_frame;
+        let mut map = HashMap::<i32, PointFeature>::new();
+        for i in 0..self.ids.len() {
+            let feautre_id = self.ids.get(i).unwrap();
+
+            let x = self.cur_un_pts.get(i).unwrap().x;
+            let y = self.cur_un_pts.get(i).unwrap().y;
+            let z = 1f32;
+            let p_u = self.cur_pts.get(i).unwrap().x;
+            let p_v = self.cur_pts.get(i).unwrap().y;
+            let veloctiry_x = pts_velocity.get(i).unwrap().x;
+            let veloctiry_y = pts_velocity.get(i).unwrap().y;
+            let ff = PointFeature {
+                camera_id: 0,
+                un_xyz: (x, y, z),
+                uv: (p_u, p_v),
+                velocity: (veloctiry_x, veloctiry_y),
+            };
+
+            map.insert(feautre_id, ff);
+        }
+
+        FeatureFrame {
+            timestamp: self.cur_time,
+            data: map,
+            image: (self.cur_img.clone(), self.img_track.clone()),
+        }
     }
 
     pub fn get_track_image(&self) -> &Mat {
@@ -455,4 +479,19 @@ where
     }
 }
 
-pub struct FeatureFrame(f64, f64, f64);
+#[derive(Debug, Default)]
+pub struct PointFeature {
+    pub camera_id: u8,
+    pub un_xyz: (f32, f32, f32),
+    pub uv: (f32, f32),
+    pub velocity: (f32, f32),
+}
+
+pub type FeatureFrameMap = HashMap<i32, PointFeature>;
+
+#[derive(Debug, Default)]
+pub struct FeatureFrame {
+    pub timestamp: f64,
+    pub data: FeatureFrameMap,
+    pub image: (Mat, Mat),
+}

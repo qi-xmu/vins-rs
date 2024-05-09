@@ -1,12 +1,20 @@
 /// opencv
 /// https://docs.rs/opencv/latest/opencv/all.html
 ///
+/// nalgebra
+/// https://docs.rs/nalgebra/latest/nalgebra/
+///
+/// ndarray
+/// https://docs.rs/ndarray/latest/ndarray/all.html
+///
 // image path /home/qi/V201/mav0/cam0/data/ **
 extern crate opencv;
 
+mod Estimator;
 mod camera;
 mod config;
-mod feature_trakcer;
+mod estimator;
+mod feature_trakcer; // 特征追踪
 
 use std::io::BufRead;
 use std::path::Path;
@@ -14,6 +22,8 @@ use std::path::Path;
 use opencv::core::MatTraitConst;
 use opencv::highgui;
 use opencv::imgcodecs;
+
+use crate::camera::PinholeCamera;
 
 fn read_csv(path: &Path) -> Vec<(f64, String)> {
     let path = path.join("data.csv");
@@ -42,13 +52,15 @@ fn main() {
         .init();
 
     let path = "/Users/qi/Resourse/Dataset/V201/mav0/cam0/";
-    let camera_file = "configs/cam0_pinhole.yaml";
     let path = Path::new(path);
-    log::info!("path: {:?}", path);
     let list = read_csv(path);
+    log::info!("path: {:?}", path);
 
-    let camera = camera::PinholeCamera::new(camera_file);
-    let mut feature_tracker = feature_trakcer::FeatureTracker::new_with_camera(camera);
+    // let camera_file = "configs/cam0_pinhole.yaml";
+    // let camera = camera::PinholeCamera::new(camera_file);
+    // let mut feature_tracker = feature_trakcer::FeatureTracker::new_with_camera(camera);
+
+    let mut estimator = estimator::Estimator::<PinholeCamera>::default();
 
     const FREQUENCY: i32 = 30;
     let path = path.join("data");
@@ -61,12 +73,13 @@ fn main() {
             log::error!("empty image");
             continue;
         }
-        feature_tracker.track_image(timestamp, &_img);
+        // feature_tracker.track_image(timestamp, &_img);
+        estimator.input_image(timestamp, &_img);
 
-        let img = feature_tracker.get_track_image().clone();
+        // let img = feature_tracker.get_track_image().clone();
 
-        highgui::imshow("Raw", &_img).unwrap();
-        highgui::imshow("Tracker", &img).unwrap();
+        // highgui::imshow("Raw", &_img).unwrap();
+        // highgui::imshow("Tracker", &img).unwrap();
         highgui::wait_key(1000 / FREQUENCY).unwrap();
     }
 }
