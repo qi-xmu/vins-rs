@@ -56,11 +56,11 @@ fn main() {
     let list = read_csv(path);
     log::info!("path: {:?}", path);
 
-    // let camera_file = "configs/cam0_pinhole.yaml";
-    // let camera = camera::PinholeCamera::new(camera_file);
-    // let mut feature_tracker = feature_trakcer::FeatureTracker::new_with_camera(camera);
+    let camera_file = "configs/cam0_pinhole.yaml";
+    let camera = camera::PinholeCamera::new(camera_file);
+    let mut feature_tracker = feature_trakcer::FeatureTracker::new_with_camera(camera);
 
-    let mut estimator = estimator::Estimator::<PinholeCamera>::default();
+    // let mut estimator = estimator::Estimator::<PinholeCamera>::default();
 
     const FREQUENCY: i32 = 30;
     let path = path.join("data");
@@ -73,13 +73,13 @@ fn main() {
             log::error!("empty image");
             continue;
         }
-        // feature_tracker.track_image(timestamp, &_img);
-        estimator.input_image(timestamp, &_img);
+        feature_tracker.track_image(timestamp, &_img);
+        // estimator.input_image(timestamp, &_img);
 
-        // let img = feature_tracker.get_track_image().clone();
+        let img = feature_tracker.get_track_image().clone();
 
-        // highgui::imshow("Raw", &_img).unwrap();
-        // highgui::imshow("Tracker", &img).unwrap();
+        highgui::imshow("Raw", &_img).unwrap();
+        highgui::imshow("Tracker", &img).unwrap();
         highgui::wait_key(1000 / FREQUENCY).unwrap();
     }
 }
