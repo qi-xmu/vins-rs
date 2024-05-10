@@ -74,7 +74,7 @@ impl<Camera> Estimator<Camera>
 where
     Camera: CameraTrait,
 {
-    pub fn input_feature() {}
+    pub fn input_feature(&self) {}
 
     #[deprecated = "use input_feature instead"]
     pub fn input_image(&mut self, timestamp: f64, img: &Mat) {

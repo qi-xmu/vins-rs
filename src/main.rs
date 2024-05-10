@@ -48,7 +48,8 @@ fn main() {
         if let Ok(img) = imgcodecs::imread(path, imgcodecs::IMREAD_GRAYSCALE) {
             let timestamp = *timestamp;
             feature_tracker.track_image(timestamp, &img);
-            // estimator.input_image(timestamp, &img);
+            estimator.input_image(timestamp, &img);
+            estimator.input_feature();
 
             let img_tracker = feature_tracker.get_track_image();
             opencv::imgproc::cvt_color(&img, &mut img_convert, COLOR_GRAY2BGR, 0).unwrap();
