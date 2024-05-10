@@ -37,6 +37,7 @@ where
     // Frame
     pub frame_count: i32,
     pub images: [(Mat, Mat); (WINDOW_SIZE + 1) as usize],
+    pub timestamps: [f64; (WINDOW_SIZE + 1) as usize],
 
     // FeatureTracker
     feature_tracker: FeatureTracker<Camera>,
@@ -68,7 +69,7 @@ where
         }
     }
 
-    fn process_image(&mut self, frame: FeatureFrame, cur_img: &Mat, img_tracker: &Mat) {
+    fn process_image(&mut self, frame: FeatureFrame, timestamp: f64) {
         log::info!("process_image");
         //
         self.images[self.frame_count as usize] = frame.image.clone();
@@ -82,7 +83,11 @@ where
             self.marginalization_flag = MarginalizationFlag::MarginSecondNew;
         };
 
-        //
+        self.timestamps[self.frame_count as usize] = timestamp;
+
+        // TODO:ImageFrame
+        let image_frame = image_frame::ImageFrame::new(timestamp, frame.data);
+
     }
 
     #[inline]
@@ -99,8 +104,8 @@ where
         loop {
             //
             if !self.feature_frame_buf.is_empty() {
-                let feature = self.feature_frame_buf.pop_front().unwrap();
-                let cur_time = feature.timestamp + self.td; // 校准时间
+                let frame = self.feature_frame_buf.pop_front().unwrap();
+                let cur_time = frame.timestamp + self.td; // 校准时间
                 loop {
                     // TODO: imu_available()
                     // 使用IMU等待IMU加载
@@ -121,7 +126,6 @@ where
                 // TODO: USE_IMU initFirstIMUPose and processIMU
 
                 // TODO: process_image()
-                // self.process_image(feature.0, &feature.1, &feature.2);
 
                 break;
             }
