@@ -1,7 +1,5 @@
-///
-///
-///
-///
+use opencv::core::{Point2d, Point3d};
+
 use crate::feature_trakcer::{PointFeature, PointFeatureMap};
 
 #[derive(Debug, Default)]
@@ -15,13 +13,15 @@ struct FeaturePerId {
     pub start_frame: i32,
     /// 该特征点的所有特征数据
     pub point_features: Vec<FeaturePerFrame>,
+    pub estimated_depth: f64,
 }
 impl FeaturePerId {
     pub fn new(feature_id: i32, start_frame: i32) -> Self {
         Self {
             feature_id,
             start_frame,
-            point_features: Vec::new(),
+            point_features: Vec::new(), // TODO:point_features
+            estimated_depth: -1.0,
         }
     }
 }
@@ -33,7 +33,50 @@ pub struct FeatureManager {
 }
 
 impl FeatureManager {
-    // compensatedParallax2 视差补偿
+    // initFramePoseByPnP
+    fn init_frame_pose_by_pnp(
+        &self,
+        frame_count: i32,
+        Rs: &Vec<i32>,
+        ts: &Vec<PointFeature>,
+        tic: &Vec<i32>,
+        ric: &Vec<i32>,
+    ) {
+        //
+        if frame_count > 0 {
+            let mut pts_2d = Vec::<Point2d>::new();
+            let mut pts_3d = Vec::<Point3d>::new();
+
+            //
+            for it_per_id in self.features.iter() {
+                //
+                if it_per_id.estimated_depth > 0.0 {
+                    //
+                    let index = frame_count - it_per_id.start_frame;
+                    if it_per_id.point_features.len() >= (index + 1) as usize {
+                        //
+                        // TODO:let pts_in_cam
+                        // TODO:let pts_in_world
+
+                        pts_2d.push(Point2d::default());
+                        pts_3d.push(Point3d::default());
+                    }
+                }
+            }
+            // camera R and t
+            let R = nalgebra::Matrix3::<f64>::identity();
+            let t = nalgebra::Vector3::<f64>::zeros();
+            // trans to w_T_cam: world to camera
+
+            // TODO:solvePoseByPnP
+            if false {
+                //
+            }
+
+            //
+        }
+    }
+    /// compensatedParallax2 视差补偿
     fn compensated_parallax2(&self, it_per_id: &FeaturePerId, frame_count: i32) -> f64 {
         //
         let i = (frame_count - it_per_id.start_frame - 2) as usize;
@@ -58,7 +101,7 @@ impl FeatureManager {
         let b = (du_comp * du_comp + dv_comp * dv_comp) as f64;
         a.min(b).sqrt().max(0.0f64)
     }
-    // addFeatureCheckParallax
+    /// 添加特征点检查视差
     pub fn add_feature_check_parallax(
         &mut self,
         frame_count: i32,
