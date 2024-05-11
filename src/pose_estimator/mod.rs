@@ -82,6 +82,11 @@ where
     /// 角速度偏置窗口
     pub bias_gyros: VecDeque<nalgebra::Vector3<f64>>,
 
+    /// IMU坐标系到相机坐标系的变换
+    pub imu_rot_to_cam: nalgebra::Matrix3<f64>, // ric
+    pub imu_trans_to_cam: nalgebra::Vector3<f64>, // tic
+
+    /// 时间戳和图像帧的映射
     pub t_image_frame_map: HashMap<i64, ImageFrame>,
 
     /* 特征 */
@@ -102,6 +107,34 @@ impl<Camera> Estimator<Camera>
 where
     Camera: CameraTrait,
 {
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        let mut _self = Self {
+            ..Default::default()
+        };
+        let size = (WINDOW_SIZE + 1) as usize;
+        _self.timestamps.reserve(size);
+        _self.diff_times.reserve(size);
+        _self.images.reserve(size);
+        _self.rot_mats.reserve(size);
+        _self.trans_vecs.reserve(size);
+        _self.vel_vecs.reserve(size);
+        _self.acce_vecs.reserve(size);
+        _self.gyro_vecs.reserve(size);
+        _self.bias_acces.reserve(size);
+        _self.bias_gyros.reserve(size);
+        _self.t_image_frame_map.reserve(size);
+        _self.feature_frame_buf.reserve(size);
+
+        // ? add default
+        _self.rot_mats.push_back(Default::default());
+        _self.trans_vecs.push_back(Default::default());
+        _self.vel_vecs.push_back(Default::default());
+        _self.bias_acces.push_back(Default::default());
+        _self.bias_gyros.push_back(Default::default());
+
+        _self
+    }
     pub fn input_feature(&mut self, timestamp: f64, feature_frame: &FeatureFrame) -> Result<()> {
         let _t = timestamp;
         let _f = feature_frame;
@@ -139,11 +172,8 @@ where
                     let t_front = *self.timestamps.front().unwrap() as i64;
                     match self.solver_flag {
                         SolverFlag::Initial => {
-                            // TODO: all_image_frame
-                            // let a = self.t_image_frame_map;
-                            // let a = self.t_image_frame_map.get(&t_front).unwrap();
+                            // TODO: all_image_frame -> t_image_frame_map
                             self.t_image_frame_map.remove(&t_front);
-                            // self.t_image_frame_map.re
                         }
                         _ => {}
                     }
@@ -152,20 +182,30 @@ where
                     self.images.pop_front();
                     self.rot_mats.pop_front();
                     self.trans_vecs.pop_front();
-                    // TODO: USE_IMU
+                    // TODO USE_IMU
+
+                    // TODO slideWindowOld --> feature_manager
                 }
             }
             MarginalizationFlag::MarginSecondNew => {
-                //
+                self.timestamps.pop_front();
+                self.images.pop_front();
+                self.rot_mats.pop_front();
+                self.trans_vecs.pop_front();
+
+                // TODO USE_IMU
+
+                // TODO slideWindowNew --> feature_manager
             }
         }
     }
 
     fn process_image(&mut self, frame: &FeatureFrame, timestamp: f64) {
         log::info!("process_image");
+        self.timestamps[self.frame_count as usize] = timestamp;
         // TODO self.images[self.frame_count as usize] = frame.image.clone();
         // self.images[self.frame_count as usize] = frame.image.clone();
-        // TODO:addFeatureCheckParallax
+        // [x] addFeatureCheckParallax
         if self.feature_manager.add_feature_check_parallax(
             self.frame_count,
             &frame.point_features,
@@ -176,23 +216,23 @@ where
             self.marginalization_flag = MarginalizationFlag::MarginSecondNew;
         };
 
-        self.timestamps[self.frame_count as usize] = timestamp;
-
         // TODO:ImageFrame
         let mut image_frame = image_frame::ImageFrame::new(timestamp, &frame.point_features);
         image_frame.pre_integration = image_frame::IntegrationBase::default(); // FIXME:tmp_pre_integration
 
-        // TODO:all_image_frame and tmp_pre_integration
+        // [x] all_image_frame and tmp_pre_integration
+        self.t_image_frame_map.insert(timestamp as i64, image_frame);
 
-        // TODO:ESTIMATE_EXTRINSIC
+        // TODO ESTIMATE_EXTRINSIC == 2
+
         match self.solver_flag {
             // sadf
             SolverFlag::Initial => {
                 // Initial
-                // TODO:STEREO
+                // TODO STEREO
                 if USE_IMU {
                     //
-                    let mut result = false;
+                    let result = false;
                     if self.frame_count == WINDOW_SIZE {
                         //
                         if timestamp - self.initial_timestamp > 0.1 {
@@ -210,22 +250,34 @@ where
                     }
                 }
 
-                //
+                // ? 填充之前的数据
                 if self.frame_count < WINDOW_SIZE {
                     self.frame_count += 1;
-                    let prev_frame_count = self.frame_count - 1;
-                    // Ps[frame_count] = Ps[prev_frame];
-                    // Vs[frame_count] = Vs[prev_frame];
-                    // Rs[frame_count] = Rs[prev_frame];
-                    // Bas[frame_count] = Bas[prev_frame];
-                    // Bgs[frame_count] = Bgs[prev_frame];
+                    self.rot_mats
+                        .push_back(self.rot_mats.back().unwrap().clone());
+                    self.trans_vecs
+                        .push_back(self.trans_vecs.back().unwrap().clone());
+                    self.vel_vecs
+                        .push_back(self.vel_vecs.back().unwrap().clone());
+                    self.bias_acces
+                        .push_back(self.bias_acces.back().unwrap().clone());
+                    self.bias_gyros
+                        .push_back(self.bias_gyros.back().unwrap().clone());
                 }
             }
             SolverFlag::NonLinear => {
                 // NonLinear
                 if !USE_IMU {
+                    self.rot_mats.make_contiguous();
+
                     // TODO:self.feature_manager initFramePoseByPnP
-                    // self.feature_manager;
+                    self.feature_manager.init_frame_pose_by_pnp(
+                        self.frame_count,
+                        self.rot_mats.make_contiguous(),
+                        self.trans_vecs.make_contiguous(),
+                        &self.imu_rot_to_cam,
+                        &self.imu_trans_to_cam,
+                    );
                 }
                 // TODO:triangulate
                 // TODO:optimization

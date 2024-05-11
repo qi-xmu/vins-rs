@@ -10,7 +10,7 @@
 // }
 
 mod pinhole_camera;
-pub use pinhole_camera::{PinholeCamera, PinholeParameters};
+pub use pinhole_camera::PinholeCamera;
 
 use opencv::core::{Point2d, Point3d};
 

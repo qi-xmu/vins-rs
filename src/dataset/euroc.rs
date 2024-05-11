@@ -1,6 +1,4 @@
-use std::{io::BufRead, path::Path};
-
-use opencv::prelude::MatTraitConstManual;
+use std::path::Path;
 
 use super::DatasetTrait;
 
@@ -11,9 +9,9 @@ pub struct EuRoCDataset {
     pub imu0s: Vec<(f64, [f64; 6])>, // t, gyro and acce
 }
 impl EuRoCDataset {
-    const EUROC_CAM0_PATH: &str = "mav0/cam0/";
-    const EUROC_CAM1_PATH: &str = "mav0/cam1/";
-    const EUROC_IMU0_PATH: &str = "mav0/imu0/";
+    const EUROC_CAM0_PATH: &'static str = "mav0/cam0/";
+    const EUROC_CAM1_PATH: &'static str = "mav0/cam1/";
+    const EUROC_IMU0_PATH: &'static str = "mav0/imu0/";
 
     pub fn read_imu(path: &Path) -> Vec<(f64, [f64; 6])> {
         let csv_path = path.join("data.csv");
