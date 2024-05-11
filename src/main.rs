@@ -48,7 +48,6 @@ fn main() {
         if let Ok(img) = imgcodecs::imread(path, imgcodecs::IMREAD_GRAYSCALE) {
             let timestamp = *timestamp;
             let feature_frame = feature_tracker.track_image(timestamp, &img);
-            // estimator.input_image(timestamp, &img);
             estimator.input_feature(timestamp, &feature_frame).ok();
 
             let img_tracker = feature_tracker.get_track_image();

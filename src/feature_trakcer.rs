@@ -558,7 +558,7 @@ pub type PointFeatureMap = HashMap<i32, PointFeature>;
 
 /// 一个帧的所有特征信息
 /// 包括帧的时间戳、特征点的所有特征信息以及图像。
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FeatureFrame {
     /// 当前帧时间戳
     pub timestamp: f64,
@@ -570,8 +570,5 @@ pub struct FeatureFrame {
 
 #[cfg(test)]
 mod tests {
-    fn test_feature_tracker() {
-
-
-    }
+    fn test_feature_tracker() {}
 }

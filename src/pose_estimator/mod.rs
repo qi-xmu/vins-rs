@@ -4,7 +4,7 @@
 mod image_frame;
 
 use anyhow::Result;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use crate::config::*;
 use crate::feature_manager::FeatureManager;
@@ -12,6 +12,8 @@ use crate::feature_trakcer::FeatureFrame;
 use crate::{camera::CameraTrait, feature_trakcer::FeatureTracker};
 
 use opencv::core::Mat;
+
+use self::image_frame::ImageFrame;
 
 #[allow(dead_code)]
 #[derive(Debug, Default)]
@@ -40,29 +42,55 @@ pub struct Estimator<Camera>
 where
     Camera: CameraTrait,
 {
-    pub input_image_cnt: i32,
     /// 输入图像计数
+    pub input_image_cnt: i32,
+
     pub prev_time: f64,
     pub cur_time: f64,
-    // td 校准时间
+    /// td 校准时间
     pub td: f64,
+    /// 初始化时间
+    pub initial_timestamp: f64,
 
     // IMU buffer
     pub acce_buf: VecDeque<(f64, [f64; 3])>,
     pub gyro_buf: VecDeque<(f64, [f64; 3])>,
 
-    // Frame
+    /// 帧计数
     pub frame_count: i32,
-    pub images: [(Mat, Mat); (WINDOW_SIZE + 1) as usize],
-    pub timestamps: [f64; (WINDOW_SIZE + 1) as usize],
 
-    initial_timestamp: f64,
+    /* ? 窗口 是否可以合并成一个窗口 */
+    /// 时间戳窗口
+    pub timestamps: VecDeque<f64>,
+    /// 时间间隔窗口
+    pub diff_times: VecDeque<f64>,
+    /// ? 图像窗口, 缓冲的必要性？
+    pub images: VecDeque<Mat>,
+    /// 旋转矩阵窗口
+    pub rot_mats: VecDeque<nalgebra::Matrix3<f64>>,
+    /// 平移向量窗口
+    pub trans_vecs: VecDeque<nalgebra::Vector3<f64>>,
+    /// 速度向量窗口
+    pub vel_vecs: VecDeque<nalgebra::Vector3<f64>>,
 
-    // FeatureTracker
+    /// 加速度窗口
+    pub acce_vecs: VecDeque<nalgebra::Vector3<f64>>,
+    /// 角速度窗口
+    pub gyro_vecs: VecDeque<nalgebra::Vector3<f64>>,
+    /// 加速度偏置窗口
+    pub bias_acces: VecDeque<nalgebra::Vector3<f64>>,
+    /// 角速度偏置窗口
+    pub bias_gyros: VecDeque<nalgebra::Vector3<f64>>,
+
+    pub t_image_frame_map: HashMap<i64, ImageFrame>,
+
+    /* 特征 */
+    /// 提取特征点
+    #[deprecated]
     feature_tracker: FeatureTracker<Camera>,
+    /// 每一帧的特征点缓冲：包括时间戳，图像，该图像所有特征点。
     feature_frame_buf: VecDeque<FeatureFrame>,
-
-    // FeatureManager
+    /// 特征管理器，提取每一帧的特征点，按照时间顺序管理特征点。
     feature_manager: FeatureManager,
 
     // Flag
@@ -77,20 +105,25 @@ where
     pub fn input_feature(&mut self, timestamp: f64, feature_frame: &FeatureFrame) -> Result<()> {
         let _t = timestamp;
         let _f = feature_frame;
+        let _a = &feature_frame.image;
+        let feature_frame = feature_frame.clone();
+        //
+        self.feature_frame_buf.push_back(feature_frame);
+        self.process_measurements();
         Ok(())
     }
 
     #[allow(dead_code)]
     #[deprecated = "use input_feature instead"]
     pub fn input_image(&mut self, timestamp: f64, img: &Mat) {
-        self.input_image_cnt += 1;
-        let feature_frame = self.feature_tracker.track_image(timestamp, &img);
+        // self.input_image_cnt += 1;
+        // let feature_frame = self.feature_tracker.track_image(timestamp, &img);
         // let nimg = img.clone();
         // let img_track = self.feature_tracker.get_track_image().clone();
 
         if MULTIPLE_THREAD {
-            self.feature_frame_buf.push_back(feature_frame);
-            self.process_measurements();
+            // self.feature_frame_buf.push_back(feature_frame);
+            // self.process_measurements();
         } else {
             // self.feature_frame_buf.push_back(feature_frame);
             // self.process_measurements();
@@ -101,11 +134,30 @@ where
         //
         match self.marginalization_flag {
             MarginalizationFlag::MarginOld => {
-                //
-                let t_0 = self.timestamps[0];
-                // TODO:back_R0 and back_P0
+                // ? Headers back_R0 back_P0
+                if self.frame_count == WINDOW_SIZE {
+                    let t_front = *self.timestamps.front().unwrap() as i64;
+                    match self.solver_flag {
+                        SolverFlag::Initial => {
+                            // TODO: all_image_frame
+                            // let a = self.t_image_frame_map;
+                            // let a = self.t_image_frame_map.get(&t_front).unwrap();
+                            self.t_image_frame_map.remove(&t_front);
+                            self.t_image_frame_map.re
+                        }
+                        _ => {}
+                    }
+                    //
+                    self.timestamps.pop_front();
+                    self.images.pop_front();
+                    self.rot_mats.pop_front();
+                    self.trans_vecs.pop_front();
+                    // TODO: USE_IMU
+                }
             }
-            _ => {}
+            MarginalizationFlag::MarginSecondNew => {
+                //
+            }
         }
     }
 
