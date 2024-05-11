@@ -143,7 +143,7 @@ where
                             // let a = self.t_image_frame_map;
                             // let a = self.t_image_frame_map.get(&t_front).unwrap();
                             self.t_image_frame_map.remove(&t_front);
-                            self.t_image_frame_map.re
+                            // self.t_image_frame_map.re
                         }
                         _ => {}
                     }
