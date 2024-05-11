@@ -7,7 +7,7 @@
 //! [ndarray]
 //! https://docs.rs/ndarray/latest/ndarray/all.html
 //!
-//! image path /home/qi/V201/mav0/cam0/data/ **
+//! image path /home/qi/V201/mav0/cam0/data/ /Users/qi/Resources/Dataset/V201
 extern crate opencv;
 
 mod camera;
@@ -20,7 +20,7 @@ mod pose_estimator;
 use opencv::core::Mat;
 use opencv::highgui;
 use opencv::imgcodecs;
-use opencv::imgproc::COLOR_GRAY2BGR;
+use opencv::imgproc;
 
 use crate::camera::PinholeCamera;
 use crate::dataset::DatasetTrait;
@@ -52,7 +52,7 @@ fn main() {
             estimator.input_feature(timestamp, &feature_frame).ok();
 
             let img_tracker = feature_tracker.get_track_image();
-            opencv::imgproc::cvt_color(&img, &mut img_convert, COLOR_GRAY2BGR, 0).unwrap();
+            opencv::imgproc::cvt_color(&img, &mut img_convert, imgproc::COLOR_GRAY2BGR, 0).unwrap();
             opencv::core::hconcat2(&img_convert, img_tracker, &mut img_show).unwrap();
             highgui::imshow("Raw Tracker", &img_show).unwrap();
             highgui::wait_key(1000 / FREQUENCY).unwrap();

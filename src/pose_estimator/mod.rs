@@ -75,6 +75,8 @@ where
     Camera: CameraTrait,
 {
     pub fn input_feature(&mut self, timestamp: f64, feature_frame: &FeatureFrame) -> Result<()> {
+        let _t = timestamp;
+        let _f = feature_frame;
         Ok(())
     }
 
