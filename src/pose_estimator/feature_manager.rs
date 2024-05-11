@@ -1,4 +1,4 @@
-use opencv::core::{Point2d, Point3d};
+use opencv::core::*;
 
 use crate::{
     config::{FOCAL_LENGTH, MIN_PARALLAX},
@@ -46,6 +46,18 @@ pub struct FeatureManager {
 }
 
 impl FeatureManager {
+    /// solvePoseByPnP
+    fn solve_pose_by_pnp(
+        &self,
+        cam_rot_mat: &nalgebra::Matrix3<f64>,
+        cam_trans_vec: &nalgebra::Vector3<f64>,
+        pts_2d: &Vector<Point2f>,
+        // pts_3d: &Vector<Point3f>,
+    ) -> bool {
+        //
+
+        false
+    }
     /// initFramePoseByPnP
     pub fn init_frame_pose_by_pnp(
         &self,
@@ -56,8 +68,8 @@ impl FeatureManager {
         imu_trans_to_cam: &nalgebra::Vector3<f64>,
     ) {
         if frame_count > 0 {
-            let mut pts_2d = Vec::<Point2d>::new();
-            let mut pts_3d = Vec::<Point3d>::new();
+            let mut pts_2d = Vector::<Point2f>::default();
+            let mut pts_3d = Vector::<Vec3f>::default(); // !!  Vector::<Point3f> error
 
             for it_per_id in self.features.iter() {
                 if it_per_id.estimated_depth > 0.0 {
@@ -66,22 +78,38 @@ impl FeatureManager {
                     // 说明该点一直追踪到了当前帧
                     if it_per_id.point_features.len() >= (index + 1) as usize {
                         //
-                        // TODO:let pts_in_cam
-                        let pts_in_cam = it_per_id.point_features[0].0.point;
-                        // TODO:let pts_in_world
+                        // [x] let pts_in_cam
+                        // ? 使用 imu_rot_to_cam 和 imu_trans_to_cam 估计出 pts_in_cam
+                        let pts_in_cam = imu_rot_to_cam
+                            * (it_per_id.point_features[0].0.point * it_per_id.estimated_depth)
+                            + imu_trans_to_cam;
 
-                        pts_2d.push(Point2d::default());
-                        pts_3d.push(Point3d::default());
+                        // [x] let pts_in_world
+                        // 使用估计的 rot_mat 和 trans_vec 估计出 pts_in_world
+                        let pts_in_world = rot_mats[it_per_id.start_frame as usize] * pts_in_cam
+                            + trans_vec[it_per_id.start_frame as usize];
+
+                        pts_2d.push(Point2f::new(
+                            it_per_id.point_features[index as usize].0.point.x as f32,
+                            it_per_id.point_features[index as usize].0.point.y as f32,
+                        ));
+
+                        pts_3d.push(Vec3f::from_array([
+                            pts_in_world.x as f32,
+                            pts_in_world.y as f32,
+                            pts_in_world.z as f32,
+                        ]));
                     }
                 }
             }
             // camera R and t
-            let _rot_mat = nalgebra::Matrix3::<f64>::identity();
-            let _trans_vec = nalgebra::Vector3::<f64>::zeros();
+            let cam_rot_mat = rot_mats[frame_count as usize - 1] * imu_rot_to_cam;
+            let cam_trans_vec = rot_mats[frame_count as usize - 1] * imu_trans_to_cam
+                + trans_vec[frame_count as usize - 1];
             // trans to w_T_cam: world to camera
 
             // TODO:solvePoseByPnP
-            if false {
+            if self.solve_pose_by_pnp(&cam_rot_mat, &cam_trans_vec, &pts_2d) {
                 //
             }
 
