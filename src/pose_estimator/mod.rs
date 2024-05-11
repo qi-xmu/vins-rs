@@ -3,6 +3,7 @@
 
 mod image_frame;
 
+use anyhow::Result;
 use std::collections::VecDeque;
 
 use crate::config::*;
@@ -15,11 +16,10 @@ use opencv::core::Mat;
 #[allow(dead_code)]
 #[derive(Debug, Default)]
 enum MarginalizationFlag {
-    ///
+    /// MarginOld
     #[default]
     MarginOld,
     /// MARGIN_SECOND_NEW
-    ///
     MarginSecondNew,
 }
 
@@ -74,14 +74,17 @@ impl<Camera> Estimator<Camera>
 where
     Camera: CameraTrait,
 {
-    pub fn input_feature(&self) {}
+    pub fn input_feature(&mut self, timestamp: f64, feature_frame: &FeatureFrame) -> Result<()> {
+        Ok(())
+    }
 
+    #[allow(dead_code)]
     #[deprecated = "use input_feature instead"]
     pub fn input_image(&mut self, timestamp: f64, img: &Mat) {
         self.input_image_cnt += 1;
-        let nimg = img.clone();
         let feature_frame = self.feature_tracker.track_image(timestamp, &img);
-        let img_track = self.feature_tracker.get_track_image().clone();
+        // let nimg = img.clone();
+        // let img_track = self.feature_tracker.get_track_image().clone();
 
         if MULTIPLE_THREAD {
             self.feature_frame_buf.push_back(feature_frame);
