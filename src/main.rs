@@ -13,7 +13,6 @@ extern crate opencv;
 mod camera;
 mod config;
 mod dataset;
-mod feature_manager;
 mod feature_trakcer;
 mod pose_estimator;
 

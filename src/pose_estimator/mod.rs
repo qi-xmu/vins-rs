@@ -1,15 +1,16 @@
 //! 估计器
 //! 通过特征点和IMU数据估计相机位姿
 
+mod feature_manager;
 mod image_frame;
 
 use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
 
 use crate::config::*;
-use crate::feature_manager::FeatureManager;
 use crate::feature_trakcer::FeatureFrame;
 use crate::{camera::CameraTrait, feature_trakcer::FeatureTracker};
+use feature_manager::FeatureManager;
 
 use opencv::core::Mat;
 
