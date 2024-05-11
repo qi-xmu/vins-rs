@@ -109,7 +109,7 @@ where
         let feature_frame = feature_frame.clone();
         //
         self.feature_frame_buf.push_back(feature_frame);
-        self.process_measurements();
+        // self.process_measurements();
         Ok(())
     }
 
