@@ -38,17 +38,17 @@ where
     /* 特征点 */
     /// good_features_to_track 新增的特征点
     /// ? 是否可以使用局部变量？
-    n_pts: Vector<Point2d>,
+    n_pts: Vector<Point2f>,
     /// 上一帧识别的特征点
-    prev_pts: Vector<Point2d>,
+    prev_pts: Vector<Point2f>,
     /// 当前帧识别的特征点
-    cur_pts: Vector<Point2d>,
+    cur_pts: Vector<Point2f>,
     /// 预测下一帧的特征点
-    predict_pts: Vector<Point2d>,
+    predict_pts: Vector<Point2f>,
     /// 上一帧 投影到归一化平面上的特征点
-    prev_un_pts: Vector<Point2d>,
+    prev_un_pts: Vector<Point2f>,
     /// 当前帧 投影到归一化平面上的特征点
-    cur_un_pts: Vector<Point2d>,
+    cur_un_pts: Vector<Point2f>,
 
     /* 状态 */
     /// 是否有预测点 predict_pts 是否可用。
@@ -56,11 +56,11 @@ where
 
     /* Map */
     /// 上一帧 id 和特征点的映射
-    prev_un_pts_map: HashMap<i32, Point2d>,
+    prev_un_pts_map: HashMap<i32, Point2f>,
     /// 当前帧 id 和特征点的映射
     /// ? 是否可以使用局部变量？
-    cur_un_pts_map: HashMap<i32, Point2d>,
-    prev_left_pts_map: HashMap<i32, Point2d>,
+    cur_un_pts_map: HashMap<i32, Point2f>,
+    prev_left_pts_map: HashMap<i32, Point2f>,
 
     /* 计数 */
     /// 每一个新增的特征点分配一个新的 id，用于标记特征点
@@ -138,7 +138,7 @@ where
 
     /// 过滤 得到status为true的集合
     #[inline]
-    fn reduce_vector_point(v: &Vector<Point2d>, status: &Vector<bool>) -> Vector<Point2d> {
+    fn reduce_vector_point(v: &Vector<Point2f>, status: &Vector<bool>) -> Vector<Point2f> {
         status
             .iter()
             .zip(v.iter())
@@ -160,7 +160,7 @@ where
 
     /// 判断点是否在图像边界。
     #[inline]
-    fn in_border(&self, pt: &Point2d) -> bool {
+    fn in_border(&self, pt: &Point2f) -> bool {
         let img_x = pt.x.round() as i32;
         let img_y = pt.y.round() as i32;
 
@@ -172,23 +172,23 @@ where
 
     /// 计算两个点之间的欧几里得距离。
     #[inline]
-    fn distance(a: &Point2d, b: &Point2d) -> f64 {
+    fn distance(a: &Point2f, b: &Point2f) -> f64 {
         // 计算两点在 x 轴和 y 轴上的差值
         let dx = a.x - b.x;
         let dy = a.y - b.y;
         // 计算并返回两点间的距离
-        (dx * dx + dy * dy).sqrt()
+        (dx * dx + dy * dy).sqrt() as f64
     }
 
     #[inline]
-    fn undistorted_pts(&self, pts: &Vector<Point2d>, cam: &impl CameraTrait) -> Vector<Point2d> {
-        let mut undistorted_pts = Vector::<Point2d>::new();
+    fn undistorted_pts(&self, pts: &Vector<Point2f>, cam: &impl CameraTrait) -> Vector<Point2f> {
+        let mut undistorted_pts = Vector::<Point2f>::new();
         for pt in pts.iter() {
             let x = pt.x;
             let y = pt.y;
-            let p = Point2d::new(x, y);
+            let p = Point2d::new(x as f64, y as f64);
             let p3d = cam.lift_projective(&p);
-            let new_pt = Point2d::new(p3d.x / p3d.z, p3d.y / p3d.z);
+            let new_pt = Point2f::new((p3d.x / p3d.z) as f32, (p3d.y / p3d.z) as f32);
             undistorted_pts.push(new_pt);
         }
         undistorted_pts
@@ -205,11 +205,11 @@ where
         // &self,
         dt: f64,
         ids: &Vector<i32>,
-        pts: &Vector<Point2d>,
-        cur_id_pts: &mut HashMap<i32, Point2d>,
-        prev_id_pts: &HashMap<i32, Point2d>,
-    ) -> Vector<Point2d> {
-        let mut pts_velocity = Vector::<Point2d>::new();
+        pts: &Vector<Point2f>,
+        cur_id_pts: &mut HashMap<i32, Point2f>,
+        prev_id_pts: &HashMap<i32, Point2f>,
+    ) -> Vector<Point2f> {
+        let mut pts_velocity = Vector::<Point2f>::new();
         cur_id_pts.clear();
         // 将 id 和当前帧特征点的映射存储到 cur_id_pts 中
         ids.iter().zip(pts.iter()).for_each(|(id, pt)| {
@@ -220,18 +220,18 @@ where
             // 上一帧有特征点，计算匹配特征点的速度
             for i in 0..pts.len() {
                 let v_pt = if let Some(it) = prev_id_pts.get(&ids.get(i).unwrap()) {
-                    let v_x = (pts.get(i).unwrap().x - it.x) / dt;
-                    let v_y = (pts.get(i).unwrap().y - it.y) / dt;
-                    Point2d::new(v_x, v_y)
+                    let v_x = (pts.get(i).unwrap().x - it.x) as f64 / dt;
+                    let v_y = (pts.get(i).unwrap().y - it.y) as f64 / dt;
+                    Point2f::new(v_x as f32, v_y as f32)
                 } else {
-                    Point2d::new(0.0, 0.0)
+                    Point2f::new(0.0, 0.0)
                 };
                 pts_velocity.push(v_pt);
             }
         } else {
             // 上一帧没有特征点，速度为0
             for _ in 0..pts.len() {
-                pts_velocity.push(Point2d::new(0.0, 0.0));
+                pts_velocity.push(Point2f::new(0.0, 0.0));
             }
         }
 
@@ -520,9 +520,9 @@ where
             let veloctiry_y = pts_velocity.get(i).unwrap().y;
             let ff = PointFeature {
                 camera_id: 0,
-                point: nalgebra::Vector3::new(x, y, z),
-                uv: nalgebra::Vector2::new(p_u, p_v),
-                velocity: nalgebra::Vector2::new(veloctiry_x, veloctiry_y),
+                point: nalgebra::Vector3::new(x as f64, y as f64, z as f64),
+                uv: nalgebra::Vector2::new(p_u as f64, p_v as f64),
+                velocity: nalgebra::Vector2::new(veloctiry_x as f64, veloctiry_y as f64),
             };
 
             point_features.insert(feautre_id, ff);
@@ -570,5 +570,5 @@ pub struct FeatureFrame {
 
 #[cfg(test)]
 mod tests {
-    fn test_feature_tracker() {}
+    // fn test_feature_tracker() {}
 }

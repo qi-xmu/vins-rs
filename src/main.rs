@@ -30,8 +30,8 @@ fn main() {
         .format_timestamp_nanos()
         .init();
 
-    let path = "/home/qi/V201";
-    // let path = "/Users/qi/Resources/Dataset/V201";
+    // let path = "/home/qi/V201";
+    let path = "/Users/qi/Resources/Dataset/V201";
     log::info!("path: {:?}", path);
     let dataset = dataset::DefaultDataset::new(path);
 
