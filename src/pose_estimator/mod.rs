@@ -5,7 +5,7 @@ mod feature_manager;
 mod image_frame;
 
 use anyhow::Result;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::config::*;
 use crate::feature_trakcer::FeatureFrame;
@@ -60,7 +60,7 @@ where
     /// 帧计数
     pub frame_count: i32,
 
-    /* ? 窗口 是否可以合并成一个窗口 */
+    /* ? 窗口 是否可以合并成一个窗口, 不合并的问题：长度管理可能出问题 */
     /// 时间戳窗口
     pub timestamps: VecDeque<f64>,
     /// 时间间隔窗口
@@ -68,7 +68,7 @@ where
     /// ? 图像窗口, 缓冲的必要性？
     pub images: VecDeque<Mat>,
     /// 旋转矩阵窗口
-    pub rot_mats: VecDeque<nalgebra::Matrix3<f64>>,
+    pub rot_mats: VecDeque<nalgebra::Rotation3<f64>>,
     /// 平移向量窗口
     pub trans_vecs: VecDeque<nalgebra::Vector3<f64>>,
     /// 速度向量窗口
@@ -84,7 +84,7 @@ where
     pub bias_gyros: VecDeque<nalgebra::Vector3<f64>>,
 
     /// IMU坐标系到相机坐标系的变换
-    pub imu_rot_to_cam: nalgebra::Matrix3<f64>, // ric
+    pub imu_rot_to_cam: nalgebra::Rotation3<f64>, // ric
     pub imu_trans_to_cam: nalgebra::Vector3<f64>, // tic
 
     /// 时间戳和图像帧的映射
@@ -102,6 +102,7 @@ where
     // Flag
     marginalization_flag: MarginalizationFlag,
     solver_flag: SolverFlag,
+    // pub key_poses: Vec<nalgebra::Vector3<f64>>,
 }
 
 impl<Camera> Estimator<Camera>
@@ -143,7 +144,7 @@ where
         let feature_frame = feature_frame.clone();
         //
         self.feature_frame_buf.push_back(feature_frame);
-        // self.process_measurements();
+        self.process_measurements();
         Ok(())
     }
 
@@ -201,9 +202,35 @@ where
         }
     }
 
+    /// outliersRejection
+    fn outliers_rejection(&mut self) -> HashSet<i32> {
+        HashSet::new()
+    }
+
+    /// failureDetection
+    fn failure_detection(&mut self) -> bool {
+        log::warn!("failure_detection");
+        return false;
+    }
+
+    /// setParameters
+    fn set_parameters(&mut self) {
+        // TODO TIC RIC
+        // self.imu_rot_to_cam
+        // self.imu_trans_to_cam
+        // TODO td and g
+
+        // TODO: MULTIPLE_THREAD
+    }
+
+    /// updateLatestStates
+    fn update_latest_states(&mut self) {
+        // TODO updateLatestStates
+    }
+
     fn process_image(&mut self, frame: &FeatureFrame, timestamp: f64) {
         log::info!("process_image");
-        self.timestamps[self.frame_count as usize] = timestamp;
+        self.timestamps.push_back(timestamp);
         // TODO self.images[self.frame_count as usize] = frame.image.clone();
         // self.images[self.frame_count as usize] = frame.image.clone();
         // [x] addFeatureCheckParallax
@@ -252,7 +279,7 @@ where
                 }
 
                 // ? 填充之前的数据
-                if self.frame_count < WINDOW_SIZE {
+                if self.frame_count >= 1 && self.frame_count < WINDOW_SIZE {
                     self.frame_count += 1;
                     self.rot_mats
                         .push_back(self.rot_mats.back().unwrap().clone());
@@ -274,37 +301,42 @@ where
                     // TODO:self.feature_manager initFramePoseByPnP
                     self.feature_manager.init_frame_pose_by_pnp(
                         self.frame_count,
-                        self.rot_mats.make_contiguous(),
-                        self.trans_vecs.make_contiguous(),
+                        &mut self.rot_mats,
+                        &mut self.trans_vecs,
                         &self.imu_rot_to_cam,
                         &self.imu_trans_to_cam,
                     );
                 }
-                // TODO:triangulate
-                // TODO:optimization
-                // TODO:outliersRejection
-                // TODO:self.feature_manager removeOutlier
-                if !MULTIPLE_THREAD {
-                    // TODO:featureTracker.removeOutliers(removeIndex);?
-                    // TODO:predictPtsInNextFrame
-                }
-                // TODO failureDetection
+                self.feature_manager.triangulate();
+                // TODO:optimization 非线性优化
 
-                if false {
+                // [x] outliersRejection 移除异常点
+                let remove_ids = self.outliers_rejection();
+                // [x] self.feature_manager removeOutlier
+                self.feature_manager.remove_outlier(remove_ids);
+                // if !MULTIPLE_THREAD {
+                //     // TODO:featureTracker.removeOutliers(removeIndex);?
+                //     // TODO:predictPtsInNextFrame
+                // }
+
+                // [x] failureDetection
+                if self.failure_detection() {
                     // ? self.failure_occur = true;
-                    // TODO:clearState
-                    // TODO:setParameter
+                    // [x] clearState
+                    self.clear_state();
+                    // [x] setParameter
+                    self.set_parameters();
                     return;
                 }
-                // TODO:slideWindow
+                self.slide_window();
 
-                // TODO:f_manager.removeFailures();
-                // TODO:key_poses.clear();
+                // [x] f_manager.removeFailures();
+                self.feature_manager.remove_failures();
+                // ? key_poses;
 
-                // TODO:updateLatestStates
-            } // _ => {}
+                self.update_latest_states();
+            }
         }
-        todo!()
     }
 
     #[inline]
@@ -349,5 +381,40 @@ where
                 break;
             }
         }
+    }
+
+    /// clearState
+    fn clear_state(&mut self) {
+        self.acce_buf.clear();
+        self.gyro_buf.clear();
+        self.feature_frame_buf.clear();
+
+        self.prev_time = -1.0;
+        self.cur_time = 0.0;
+
+        self.input_image_cnt = 0;
+        self.initial_timestamp = 0.0;
+
+        self.frame_count = 0;
+        self.diff_times.clear();
+        self.rot_mats.clear();
+        self.trans_vecs.clear();
+        self.vel_vecs.clear();
+        self.acce_vecs.clear();
+        self.gyro_vecs.clear();
+        self.bias_acces.clear();
+        self.bias_gyros.clear();
+
+        // TODO pre_integrations
+
+        self.imu_rot_to_cam = nalgebra::Rotation3::identity();
+        self.imu_trans_to_cam = nalgebra::Vector3::zeros();
+
+        self.solver_flag = SolverFlag::Initial;
+        // 图像帧的映射
+        self.t_image_frame_map.clear();
+
+        // feature manager
+        self.feature_manager.clear_state();
     }
 }

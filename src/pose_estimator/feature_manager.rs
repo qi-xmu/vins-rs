@@ -1,3 +1,6 @@
+use std::collections::{HashSet, VecDeque};
+
+use nalgebra::{Rotation3, Vector3};
 use opencv::core::*;
 
 use crate::{
@@ -8,6 +11,18 @@ use crate::{
 #[derive(Debug, Default)]
 struct FeaturePerFrame(PointFeature, f64);
 
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+pub enum FeatureSolveFlag {
+    /// 待求解
+    #[default]
+    WaitSolve,
+    /// 求解成功
+    SolveSuccess,
+    /// 求解失败
+    SolveFail,
+}
+
 #[derive(Debug, Default)]
 struct FeaturePerId {
     /// 特征点的id
@@ -17,8 +32,11 @@ struct FeaturePerId {
     /// 该特征点的所有特征数据
     pub point_features: Vec<FeaturePerFrame>,
     pub estimated_depth: f64,
+    ///  0 haven't solve yet; 1 solve succ; 2 solve fail;
+    pub solve_flag: FeatureSolveFlag,
 }
 impl FeaturePerId {
+    #[allow(dead_code)]
     pub fn new(feature_id: i32, start_frame: i32) -> Self {
         Self {
             feature_id,
@@ -49,22 +67,32 @@ impl FeatureManager {
     /// solvePoseByPnP
     fn solve_pose_by_pnp(
         &self,
-        cam_rot_mat: &nalgebra::Matrix3<f64>,
-        cam_trans_vec: &nalgebra::Vector3<f64>,
+        cam_rot_mat: &mut nalgebra::Rotation3<f64>,
+        cam_trans_vec: &mut nalgebra::Vector3<f64>,
         pts_2d: &Vector<Point2f>,
         // pts_3d: &Vector<Point3f>,
     ) -> bool {
-        //
+        let rot_initial = cam_rot_mat.inverse();
+        let trans_initial = rot_initial * *cam_trans_vec;
+        if pts_2d.len() < 4 {
+            log::warn!("PnP needs at least 4 points");
+            return false;
+        }
+        let _ = trans_initial;
+        // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga549c2075fac14829ff4a58bc931c033d
 
+        // --> https://github.com/rust-cv/pnp
+
+        // TODO! EPnP Algorithm https://github.com/cvlab-epfl/EPnPƒ
         false
     }
     /// initFramePoseByPnP
     pub fn init_frame_pose_by_pnp(
         &self,
         frame_count: i32,
-        rot_mats: &[nalgebra::Matrix3<f64>],
-        trans_vec: &[nalgebra::Vector3<f64>],
-        imu_rot_to_cam: &nalgebra::Matrix3<f64>,
+        rot_mats: &mut VecDeque<Rotation3<f64>>,
+        trans_vec: &mut VecDeque<Vector3<f64>>,
+        imu_rot_to_cam: &nalgebra::Rotation3<f64>,
         imu_trans_to_cam: &nalgebra::Vector3<f64>,
     ) {
         if frame_count > 0 {
@@ -103,18 +131,68 @@ impl FeatureManager {
                 }
             }
             // camera R and t
-            let cam_rot_mat = rot_mats[frame_count as usize - 1] * imu_rot_to_cam;
-            let cam_trans_vec = rot_mats[frame_count as usize - 1] * imu_trans_to_cam
+            let mut cam_rot_mat = rot_mats[frame_count as usize - 1] * imu_rot_to_cam;
+            let mut cam_trans_vec = rot_mats[frame_count as usize - 1] * imu_trans_to_cam
                 + trans_vec[frame_count as usize - 1];
             // trans to w_T_cam: world to camera
 
-            // TODO:solvePoseByPnP
-            if self.solve_pose_by_pnp(&cam_rot_mat, &cam_trans_vec, &pts_2d) {
-                //
+            // TODO solvePoseByPnP 根据PnP算法计算相机姿态。
+            if self.solve_pose_by_pnp(&mut cam_rot_mat, &mut cam_trans_vec, &pts_2d) {
+                // 这里计算出 cam_rot_mat 和 cam_trans_vec
+                let rot_tmp = cam_rot_mat * imu_rot_to_cam.transpose();
+                rot_mats.push_back(rot_tmp);
+                trans_vec.push_back(-(rot_tmp * imu_trans_to_cam) + cam_trans_vec);
+                log::debug!("Rot Mat: {:?}", rot_tmp);
+            }
+        }
+    }
+
+    /// ? 三角测量
+    pub fn triangulate(&mut self) {
+        // TODO:triangulate
+        self.features.iter_mut().for_each(|it_per_id| {
+            //
+            if it_per_id.estimated_depth > 0.0 {
+                return;
+            }
+            if it_per_id.point_features.len() > 1 {
+                // TODO
+                return;
+            }
+            // ? 判断有问题
+            let used_num = it_per_id.point_features.len();
+            if used_num < 4 {
+                return;
             }
 
-            //
-        }
+            let imu_i = it_per_id.start_frame;
+            let mut imu_j = imu_i - 1;
+
+            for _it_pt_feat in it_per_id.point_features.iter() {
+                imu_j += 1;
+
+                // ? 毫无意义的判断
+            }
+
+            // TODO estimated_depth
+            if it_per_id.estimated_depth < 0.1 {
+                it_per_id.estimated_depth = 1.0;
+            }
+        });
+    }
+
+    /// 移除异常点
+    /// removeOutlier
+    pub fn remove_outlier(&mut self, frame_counts: HashSet<i32>) {
+        self.features
+            .retain(|it_per_id| !frame_counts.contains(&it_per_id.feature_id));
+    }
+    /// remove_failures
+    pub fn remove_failures(&mut self) {
+        self.features.retain(|it| match it.solve_flag {
+            FeatureSolveFlag::SolveFail => false,
+            _ => true,
+        });
     }
 
     /// Finish: compensatedParallax2 视差补偿
@@ -224,5 +302,24 @@ impl FeatureManager {
             self.last_average_parallax = average_parallax * FOCAL_LENGTH;
             average_parallax >= MIN_PARALLAX
         }
+    }
+
+    pub fn clear_state(&mut self) {
+        self.features.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nalgebra::{Rotation3, Vector3};
+
+    #[test]
+    fn test_rot2rvec() {
+        let axis = Vector3::x_axis();
+        let angle = 1.57;
+        let b = Rotation3::from_axis_angle(&axis, angle);
+        let (axis, angle) = b.axis_angle().unwrap();
+
+        println!("{:?}", b);
     }
 }

@@ -21,6 +21,7 @@ default = [
     "opencv/imgproc",
     "opencv/video",
     "opencv/highgui",
+    "opencv/calib3d",
 ]
 
 # [build-dependencies]

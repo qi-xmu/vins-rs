@@ -12,7 +12,7 @@ pub struct ImageFrame {
     pub pre_integration: IntegrationBase,
 
     /// 旋转矩阵
-    pub rot_matrix: nalgebra::Matrix3<f64>,
+    pub rot_matrix: nalgebra::Rotation3<f64>,
     /// 平移向量
     pub trans_vector: nalgebra::Vector3<f64>,
 }
