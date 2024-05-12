@@ -311,7 +311,6 @@ where
     /// 该方法会在内部维护一个状态，用于跟踪特征点。
     /// 该方法会返回一个 `FeatureFrame` 结构体，其中包含了当前图像中的特征点。
     pub fn track_image(&mut self, timestamp: f64, img: &Mat) -> FeatureFrame {
-        log::info!("timestamp={}", timestamp);
         self.cur_time = timestamp; // 当前时间
         self.cur_img = img.clone(); // 当前图像
         self.row = img.rows(); // 图像行数
