@@ -228,10 +228,15 @@ where
         // TODO updateLatestStates
     }
 
+    /// 非线性优化
+    fn optimization(&mut self) {
+        // TODO:optimization 非线性优化
+    }
+
     fn process_image(&mut self, frame: &FeatureFrame, timestamp: f64) {
         log::info!("process_image");
         self.timestamps.push_back(timestamp);
-        // TODO self.images[self.frame_count as usize] = frame.image.clone();
+        //  self.images[self.frame_count as usize] = frame.image.clone();
         // self.images[self.frame_count as usize] = frame.image.clone();
         // [x] addFeatureCheckParallax
         if self.feature_manager.add_feature_check_parallax(
@@ -244,7 +249,6 @@ where
             self.marginalization_flag = MarginalizationFlag::MarginSecondNew;
         };
 
-        // TODO:ImageFrame
         let mut image_frame = image_frame::ImageFrame::new(timestamp, &frame.point_features);
         image_frame.pre_integration = image_frame::IntegrationBase::default(); // FIXME:tmp_pre_integration
 
@@ -308,7 +312,7 @@ where
                     );
                 }
                 self.feature_manager.triangulate();
-                // TODO:optimization 非线性优化
+                self.optimization();
 
                 // [x] outliersRejection 移除异常点
                 let remove_ids = self.outliers_rejection();

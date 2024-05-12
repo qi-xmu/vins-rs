@@ -452,7 +452,7 @@ where
             // 检查是否需要添加新的特征点
             let n_max_cnt = MAX_CNT - self.cur_pts.len() as i32;
             if n_max_cnt > 0 {
-                log::info!("n_max_cnt={}", n_max_cnt);
+                log::debug!("n_max_cnt={}", n_max_cnt);
                 opencv::imgproc::good_features_to_track(
                     &self.cur_img,
                     &mut self.n_pts,
