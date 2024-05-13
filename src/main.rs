@@ -1,13 +1,21 @@
-//! [opencv]
+//! VINS 解析
+//! https://github.com/StevenCui/VIO-Doc
+//!
+//!
+//! 使用的第三方库
+//!
+//! [opencv] 图像处理库
 //! https://docs.rs/opencv/latest/opencv/all.html
 //!
-//! [nalgebra]
+//! [nalgebra] 线性代数库
 //!  https://docs.rs/nalgebra/latest/nalgebra/
 //!
-//! [ndarray]
+//! [ndarray] 数组库：暂时没用到
 //! https://docs.rs/ndarray/latest/ndarray/all.html
 //!
 //! image path /home/qi/V201/mav0/cam0/data/ /Users/qi/Resources/Dataset/V201
+//!
+
 extern crate opencv;
 
 mod camera;
@@ -18,6 +26,7 @@ mod pose_estimator;
 
 use opencv::core::Mat;
 use opencv::highgui;
+use opencv::highgui::wait_key;
 use opencv::imgcodecs;
 use opencv::imgproc;
 
@@ -40,7 +49,7 @@ fn main() {
     let mut feature_tracker = feature_trakcer::FeatureTracker::new_with_camera(camera);
     let mut estimator = pose_estimator::Estimator::<PinholeCamera>::default();
 
-    const FREQUENCY: i32 = 30;
+    const FREQUENCY: i32 = 20;
     let mut img_convert = Mat::default();
     let mut img_show = Mat::default();
     for (timestamp, path) in dataset.read_t_cam0_list() {
@@ -54,6 +63,7 @@ fn main() {
             opencv::core::hconcat2(&img_convert, img_tracker, &mut img_show).unwrap();
             highgui::imshow("Raw Tracker", &img_show).unwrap();
             highgui::wait_key(1000 / FREQUENCY).unwrap();
+            // highgui::wait_key(1).unwrap();
         }
     }
 }

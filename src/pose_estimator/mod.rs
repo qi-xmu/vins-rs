@@ -166,7 +166,7 @@ where
     }
 
     pub fn slide_window(&mut self) {
-        //
+        // TODO slide_window
         match self.marginalization_flag {
             MarginalizationFlag::MarginOld => {
                 // ? Headers back_R0 back_P0
@@ -174,7 +174,7 @@ where
                     let t_front = *self.timestamps.front().unwrap() as i64;
                     match self.solver_flag {
                         SolverFlag::Initial => {
-                            // TODO: all_image_frame -> t_image_frame_map
+                            // [x] all_image_frame -> t_image_frame_map
                             self.t_image_frame_map.remove(&t_front);
                         }
                         _ => {}
@@ -184,9 +184,8 @@ where
                     self.images.pop_front();
                     self.rot_mats.pop_front();
                     self.trans_vecs.pop_front();
-                    // TODO USE_IMU
-
-                    // TODO slideWindowOld --> feature_manager
+                    // [ ] USE_IMU
+                    // [ ] slideWindowOld --> feature_manager
                 }
             }
             MarginalizationFlag::MarginSecondNew => {
@@ -195,35 +194,40 @@ where
                 self.rot_mats.pop_front();
                 self.trans_vecs.pop_front();
 
-                // TODO USE_IMU
-
-                // TODO slideWindowNew --> feature_manager
+                // [ ] USE_IMU
+                // [ ] slideWindowNew 边缘化
+                // README https://zhuanlan.zhihu.com/p/499831202
+                // README https://zhuanlan.zhihu.com/p/430996372
+                let _ = &self.feature_manager;
             }
         }
     }
 
     /// outliersRejection
     fn outliers_rejection(&mut self) -> HashSet<i32> {
+        // TODO outliersRejection
         HashSet::new()
     }
 
     /// failureDetection
     fn failure_detection(&mut self) -> bool {
+        // TODO failureDetection
         log::warn!("failure_detection");
         return false;
     }
 
     /// setParameters
     fn set_parameters(&mut self) {
-        // TODO TIC RIC
+        // TODO setParameters
+        // [ ] TIC RIC
         // self.imu_rot_to_cam
         // self.imu_trans_to_cam
-        // TODO td and g
+        // [ ] td and g
 
-        // TODO: MULTIPLE_THREAD
+        // [ ]: MULTIPLE_THREAD
     }
 
-    /// updateLatestStates
+    /// ? updateLatestStates
     fn update_latest_states(&mut self) {
         // TODO updateLatestStates
     }
@@ -273,16 +277,17 @@ where
                         }
                     }
                     if result {
-                        // TODO:optimization
-                        // TODO:updateLatestStates
+                        // [ ] optimization
+                        self.optimization();
+                        // [ ] updateLatestStates
+                        self.update_latest_states();
                         self.solver_flag = SolverFlag::NonLinear;
-                        // TODO:slideWindow
-                    } else {
-                        // TODO:slideWindow
                     }
+                    // [ ] slideWindow
+                    self.slide_window();
                 }
 
-                // ? 填充之前的数据
+                // ? 填充之前的数据 add: >=1
                 if self.frame_count >= 1 && self.frame_count < WINDOW_SIZE {
                     self.frame_count += 1;
                     self.rot_mats
@@ -318,14 +323,11 @@ where
                 let remove_ids = self.outliers_rejection();
                 // [x] self.feature_manager removeOutlier
                 self.feature_manager.remove_outlier(remove_ids);
-                // if !MULTIPLE_THREAD {
-                //     // TODO:featureTracker.removeOutliers(removeIndex);?
-                //     // TODO:predictPtsInNextFrame
-                // }
+                // [ ] MULTIPLE_THREAD
 
                 // [x] failureDetection
                 if self.failure_detection() {
-                    // ? self.failure_occur = true;
+                    // [ ] ? self.failure_occur = true;
                     // [x] clearState
                     self.clear_state();
                     // [x] setParameter
@@ -336,8 +338,9 @@ where
 
                 // [x] f_manager.removeFailures();
                 self.feature_manager.remove_failures();
-                // ? key_poses;
+                // [ ] key_poses;
 
+                // [ ] last_R
                 self.update_latest_states();
             }
         }

@@ -17,7 +17,6 @@ pub const BORDER_SIZE: i32 = 5;
 pub const USE_IMU: bool = false;
 /// 窗口大小
 pub const WINDOW_SIZE: i32 = 10;
-
 /// 相机焦距
 pub const FOCAL_LENGTH: f64 = 460.0;
 /// 窗口内最小视差

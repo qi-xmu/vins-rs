@@ -8,6 +8,8 @@ use crate::{
     feature_trakcer::{PointFeature, PointFeatureMap},
 };
 
+use super::WINDOW_SIZE;
+
 #[derive(Debug, Default)]
 struct FeaturePerFrame(PointFeature, f64);
 
@@ -31,6 +33,7 @@ struct FeaturePerId {
     pub start_frame: i32,
     /// 该特征点的所有特征数据
     pub point_features: Vec<FeaturePerFrame>,
+    /// 估计点的深度
     pub estimated_depth: f64,
     ///  0 haven't solve yet; 1 solve succ; 2 solve fail;
     pub solve_flag: FeatureSolveFlag,
@@ -41,15 +44,20 @@ impl FeaturePerId {
         Self {
             feature_id,
             start_frame,
-            point_features: Vec::new(), // TODO:point_features
+            point_features: Vec::new(), // TODO point_features
             estimated_depth: -1.0,
             ..Default::default()
         }
+    }
+
+    pub fn end_frame_id(&self) -> i32 {
+        self.start_frame + self.point_features.len() as i32 - 1
     }
 }
 
 #[derive(Debug, Default)]
 pub struct FeatureManager {
+    /// 所有特征点
     features: Vec<FeaturePerId>,
 
     /* 特征点 是否可使用局部变量？ */
@@ -79,11 +87,9 @@ impl FeatureManager {
             return false;
         }
         let _ = trans_initial;
+        // TODO EPnP Algorithm https://github.com/cvlab-epfl/EPnPƒ
+        // https://github.com/rust-cv/pnp
         // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga549c2075fac14829ff4a58bc931c033d
-
-        // --> https://github.com/rust-cv/pnp
-
-        // TODO! EPnP Algorithm https://github.com/cvlab-epfl/EPnPƒ
         false
     }
     /// initFramePoseByPnP
@@ -102,10 +108,9 @@ impl FeatureManager {
             for it_per_id in self.features.iter() {
                 if it_per_id.estimated_depth > 0.0 {
                     // 该特征点追踪的次数 - 1
-                    let index = frame_count - it_per_id.start_frame;
+                    let index = (frame_count - it_per_id.start_frame) as usize;
                     // 说明该点一直追踪到了当前帧
-                    if it_per_id.point_features.len() >= (index + 1) as usize {
-                        //
+                    if it_per_id.point_features.len() >= index + 1 {
                         // [x] let pts_in_cam
                         // ? 使用 imu_rot_to_cam 和 imu_trans_to_cam 估计出 pts_in_cam
                         let pts_in_cam = imu_rot_to_cam
@@ -118,8 +123,8 @@ impl FeatureManager {
                             + trans_vec[it_per_id.start_frame as usize];
 
                         pts_2d.push(Point2f::new(
-                            it_per_id.point_features[index as usize].0.point.x as f32,
-                            it_per_id.point_features[index as usize].0.point.y as f32,
+                            it_per_id.point_features[index].0.point.x as f32,
+                            it_per_id.point_features[index].0.point.y as f32,
                         ));
 
                         pts_3d.push(Vec3f::from_array([
@@ -136,7 +141,7 @@ impl FeatureManager {
                 + trans_vec[frame_count as usize - 1];
             // trans to w_T_cam: world to camera
 
-            // TODO solvePoseByPnP 根据PnP算法计算相机姿态。
+            // [ ] solvePoseByPnP 根据PnP算法计算相机姿态。
             if self.solve_pose_by_pnp(&mut cam_rot_mat, &mut cam_trans_vec, &pts_2d) {
                 // 这里计算出 cam_rot_mat 和 cam_trans_vec
                 let rot_tmp = cam_rot_mat * imu_rot_to_cam.transpose();
@@ -149,14 +154,14 @@ impl FeatureManager {
 
     /// ? 三角测量
     pub fn triangulate(&mut self) {
-        // TODO:triangulate
+        // TODO triangulate
         self.features.iter_mut().for_each(|it_per_id| {
             //
             if it_per_id.estimated_depth > 0.0 {
                 return;
             }
             if it_per_id.point_features.len() > 1 {
-                // TODO
+                // [ ] triangulate 计算
                 return;
             }
             // ? 判断有问题
@@ -170,11 +175,11 @@ impl FeatureManager {
 
             for _it_pt_feat in it_per_id.point_features.iter() {
                 imu_j += 1;
-
+                let _ = imu_j;
                 // ? 毫无意义的判断
             }
 
-            // TODO estimated_depth
+            // [ ] estimated_depth
             if it_per_id.estimated_depth < 0.1 {
                 it_per_id.estimated_depth = 1.0;
             }
@@ -192,6 +197,28 @@ impl FeatureManager {
         self.features.retain(|it| match it.solve_flag {
             FeatureSolveFlag::SolveFail => false,
             _ => true,
+        });
+    }
+
+    /// removeFront
+    pub fn remove_front(&mut self, frame_count: i32) {
+        // TODO remove_front 边缘化？
+        self.features.retain(|feat| {
+            if feat.start_frame == frame_count {
+                // feat.start_frame -= 1;
+            } else {
+                if feat.end_frame_id() < frame_count - 1 {
+                    // 说明当前特征点没有追踪到当前帧，之前的数据不需要修改
+                }
+                let j = WINDOW_SIZE - 1 - feat.start_frame; // 最多有 j 个特征数据
+
+                // 特征点追踪到了当前帧
+                // feat.point_features
+                if feat.point_features.len() == 0 {
+                    //
+                }
+            }
+            true
         });
     }
 
@@ -318,7 +345,6 @@ mod tests {
         let axis = Vector3::x_axis();
         let angle = 1.57;
         let b = Rotation3::from_axis_angle(&axis, angle);
-        let (axis, angle) = b.axis_angle().unwrap();
 
         println!("{:?}", b);
     }

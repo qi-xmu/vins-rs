@@ -6,10 +6,17 @@ This is a Rust implementation of the VINS algorithm. The original implementation
 
 # 目标
 
-- [x] 实现特征识别和追踪 (Feature detection and tracking) 2024/05/08
+- [x] EuRoC 数据集读取 (EuRoC dataset reader) 2024/05/12
 - [x] Pinhole相机模型 (Pinhole camera model) 2024/05/09
-- [ ] 实现IMU预积分 (IMU preintegration)
-
+- [x] 实现特征识别和追踪 (Feature detection and tracking) 2024/05/08
+- [ ] 实现视觉里程计 (Visual odometry)
+  - [ ] 初始化 (Initialization)
+  - [ ] 三角化 (Triangulation)
+  - [ ] EPnP (EPnP)
+  - [ ] 滑动窗口边缘化 (Sliding window marginalization)
+- [ ] IMU
+  - [ ] 实现IMU预积分 (IMU preintegration)
+- [ ] 多线程并行 (Multi-threading)
 # Dependencies
 
 - [opencv](https://docs.rs/opencv/latest/opencv/index.html)
