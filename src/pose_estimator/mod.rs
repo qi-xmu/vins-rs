@@ -3,16 +3,19 @@
 
 mod feature_manager;
 mod image_frame;
+mod sfm;
 
 use anyhow::Result;
+use nalgebra::AbstractRotation;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::config::*;
 use crate::feature_trakcer::FeatureFrame;
+use crate::{config::*, global_cast};
+
 use crate::{camera::CameraTrait, feature_trakcer::FeatureTracker};
 use feature_manager::FeatureManager;
 
-use opencv::core::Mat;
+use opencv::core::{Mat, Point2d, Vector};
 
 use self::image_frame::ImageFrame;
 
@@ -31,8 +34,6 @@ enum MarginalizationFlag {
 enum SolverFlag {
     /// NON_LINEAR
     NonLinear,
-    /// LINEARIZE
-    // Linearize,
     /// INITIAL
     #[default]
     Initial,
@@ -145,6 +146,7 @@ where
         //
         self.feature_frame_buf.push_back(feature_frame);
         self.process_measurements();
+
         Ok(())
     }
 
@@ -186,6 +188,16 @@ where
                     self.trans_vecs.pop_front();
                     // [ ] USE_IMU
                     // [ ] slideWindowOld --> feature_manager
+
+                    match self.solver_flag {
+                        SolverFlag::Initial => {
+                            self.feature_manager.remove_old();
+                        }
+                        SolverFlag::NonLinear => {
+                            // TODO 这里需要移除深度
+                            // self.feature_manager.remove_old();
+                        }
+                    }
                 }
             }
             MarginalizationFlag::MarginSecondNew => {
@@ -198,7 +210,8 @@ where
                 // [ ] slideWindowNew 边缘化
                 // README https://zhuanlan.zhihu.com/p/499831202
                 // README https://zhuanlan.zhihu.com/p/430996372
-                let _ = &self.feature_manager;
+
+                self.feature_manager.remove_new(self.frame_count);
             }
         }
     }
@@ -236,22 +249,109 @@ where
     fn optimization(&mut self) {
         // TODO:optimization 非线性优化
     }
+    /// relativePose 使用五点法计算相对位姿
+    fn relative_pose(&self) -> Option<(i32, nalgebra::Rotation3<f64>, nalgebra::Vector3<f64>)> {
+        for i in 0..WINDOW_SIZE {
+            // matched points
+            let (corres, average_parallax) = self
+                .feature_manager
+                .get_corresponding_points(i, WINDOW_SIZE);
 
+            if corres.len() > 20 && average_parallax > 30.0 {
+                if let Some((_rot, _trans)) = self.feature_manager.solve_relative_rt(&corres) {
+                    return Some((i, _rot, _trans));
+                }
+            }
+        }
+        None
+    }
+    /// initial_structure
+    fn initial_structure(&mut self) -> bool {
+        // TODO initial_structure
+        if let Some((i, rot, trans)) = self.relative_pose() {
+            // SFM
+            // log::info!("initial_structure i:{} rot:{} trans:{}", i, rot, trans);
+            // frame i, rot_i: rot , trans_i : trans
+            // 求解 i --> frame_count 的相对位姿
+            // 条件：
+            // 1. i 时刻的姿态，位移。
+
+            // 路标i第 j 帧的特征
+            let mut sfm_list = sfm::SFMFeatureList::new();
+            for it in self.feature_manager.features.iter() {
+                let point2s = it
+                    .point_features
+                    .iter()
+                    .map(|it| Point2d::new(it.0.point.x, it.0.point.y))
+                    .collect::<Vector<_>>();
+
+                let item = sfm::SFMFeature {
+                    state: false,
+                    start_frame: it.start_frame,
+                    feature_id: it.feature_id,
+                    point2s,
+                    ..Default::default()
+                };
+                sfm_list.push(item);
+            }
+            let i = i as usize; // 开始
+            let e = self.frame_count as usize + 1;
+            if let Some((c_poses, track_points)) =
+                sfm::sfm_construct(i, e, rot, trans, &mut sfm_list)
+            {
+                // solve pnp for all frame
+
+                for (i, it) in self.t_image_frame_map.iter_mut().enumerate() {
+                    //
+                    if *it.0 == self.timestamps[i] as i64 {
+                        it.1.is_key_frame = true;
+                        it.1.rot_matrix = c_poses[i].rotation.inverse().to_rotation_matrix()
+                            * self.imu_rot_to_cam;
+                        it.1.trans_vector =
+                            -(c_poses[i].rotation.inverse() * c_poses[i].translation.vector);
+                        continue;
+                    } else if *it.0 > self.timestamps[i] as i64 {
+                        // continue;
+                    }
+
+                    let mut rvec: Mat = global_cast::Quaterniond(c_poses[i].rotation).into();
+                    let mut tvec: Mat = global_cast::Vector3d(c_poses[i].translation.vector).into();
+                    //
+                    it.1.is_key_frame = false;
+                    // let pts_3_vector = Vector::new();
+                    // let pts_2_vector = Vector::new();
+
+                    for (feature_id, point_feature) in it.1.points.iter() {
+                        if let Some(pt) = track_points.get(&feature_id) {
+                            // ????!!!
+                        }
+                    }
+                }
+                true
+            } else {
+                self.marginalization_flag = MarginalizationFlag::MarginOld;
+                false
+            }
+        } else {
+            log::info!("initial_structure failed");
+            false
+        }
+    }
     fn process_image(&mut self, frame: &FeatureFrame, timestamp: f64) {
-        log::info!("process_image");
+        log::info!("process_image frame_count: {}", self.frame_count);
         self.timestamps.push_back(timestamp);
-        //  self.images[self.frame_count as usize] = frame.image.clone();
-        // self.images[self.frame_count as usize] = frame.image.clone();
+
         // [x] addFeatureCheckParallax
-        if self.feature_manager.add_feature_check_parallax(
+        self.marginalization_flag = if self.feature_manager.add_feature_check_parallax(
             self.frame_count,
             &frame.point_features,
             self.td,
         ) {
-            self.marginalization_flag = MarginalizationFlag::MarginOld;
+            MarginalizationFlag::MarginOld
         } else {
-            self.marginalization_flag = MarginalizationFlag::MarginSecondNew;
+            MarginalizationFlag::MarginSecondNew
         };
+        log::info!("marginalization_flag: {:?}", self.marginalization_flag);
 
         let mut image_frame = image_frame::ImageFrame::new(timestamp, &frame.point_features);
         image_frame.pre_integration = image_frame::IntegrationBase::default(); // FIXME:tmp_pre_integration
@@ -265,14 +365,13 @@ where
             // sadf
             SolverFlag::Initial => {
                 // Initial
-                // TODO STEREO
-                if USE_IMU {
-                    //
+                if true {
                     let result = false;
                     if self.frame_count == WINDOW_SIZE {
-                        //
                         if timestamp - self.initial_timestamp > 0.1 {
-                            // TODO:initialStructure
+                            // 初始化
+                            log::info!("initial_structure");
+                            self.initial_structure();
                             self.initial_timestamp = timestamp;
                         }
                     }
@@ -288,7 +387,7 @@ where
                 }
 
                 // ? 填充之前的数据 add: >=1
-                if self.frame_count >= 1 && self.frame_count < WINDOW_SIZE {
+                if self.frame_count < WINDOW_SIZE {
                     self.frame_count += 1;
                     self.rot_mats
                         .push_back(self.rot_mats.back().unwrap().clone());
@@ -306,8 +405,7 @@ where
                 // NonLinear
                 if !USE_IMU {
                     self.rot_mats.make_contiguous();
-
-                    // TODO:self.feature_manager initFramePoseByPnP
+                    // [x] self.feature_manager initFramePoseByPnP
                     self.feature_manager.init_frame_pose_by_pnp(
                         self.frame_count,
                         &mut self.rot_mats,

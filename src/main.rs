@@ -22,11 +22,12 @@ mod camera;
 mod config;
 mod dataset;
 mod feature_trakcer;
+mod global_cast; // 全局转换
 mod pose_estimator;
+mod save;
 
 use opencv::core::Mat;
 use opencv::highgui;
-use opencv::highgui::wait_key;
 use opencv::imgcodecs;
 use opencv::imgproc;
 
@@ -47,23 +48,56 @@ fn main() {
     let camera_file = "configs/cam0_pinhole.yaml";
     let camera = PinholeCamera::new(camera_file);
     let mut feature_tracker = feature_trakcer::FeatureTracker::new_with_camera(camera);
-    let mut estimator = pose_estimator::Estimator::<PinholeCamera>::default();
+    let mut estimator = pose_estimator::Estimator::<PinholeCamera>::new();
 
     const FREQUENCY: i32 = 20;
     let mut img_convert = Mat::default();
     let mut img_show = Mat::default();
     for (timestamp, path) in dataset.read_t_cam0_list() {
         if let Ok(img) = imgcodecs::imread(path, imgcodecs::IMREAD_GRAYSCALE) {
-            let timestamp = *timestamp;
+            let timestamp = *timestamp / 1_000_000_000.0;
             let feature_frame = feature_tracker.track_image(timestamp, &img);
-            estimator.input_feature(timestamp, &feature_frame).ok();
+
+            estimator.input_feature(timestamp, &feature_frame).unwrap();
 
             let img_tracker = feature_tracker.get_track_image();
             opencv::imgproc::cvt_color(&img, &mut img_convert, imgproc::COLOR_GRAY2BGR, 0).unwrap();
             opencv::core::hconcat2(&img_convert, img_tracker, &mut img_show).unwrap();
             highgui::imshow("Raw Tracker", &img_show).unwrap();
-            highgui::wait_key(1000 / FREQUENCY).unwrap();
-            // highgui::wait_key(1).unwrap();
+            // highgui::wait_key(1000 / FREQUENCY).unwrap();
+            if let Ok(key) = highgui::wait_key(1) {
+                if key == 27 {
+                    break;
+                }
+            };
         }
+    }
+}
+
+#[test]
+fn test_feature_tracker() {
+    let path = "/Users/qi/Resources/Dataset/V201";
+    let dataset = dataset::DefaultDataset::new(path);
+    let camera_file = "configs/cam0_pinhole.yaml";
+    let camera = PinholeCamera::new(camera_file);
+    let mut feature_tracker = feature_trakcer::FeatureTracker::new_with_camera(camera);
+    for (timestamp, path) in dataset.read_t_cam0_list() {
+        let img = imgcodecs::imread(path, imgcodecs::IMREAD_GRAYSCALE).unwrap();
+        let feature_frame = feature_tracker.track_image(*timestamp / 1_000_000_000.0, &img);
+
+        let fps: crate::save::pts::FramePointsSave = feature_frame.into();
+        let ser_fps = serde_json::to_string(&fps).unwrap();
+        // save pts
+        let tmp_dir = "temp";
+
+        // 文件夹是否存在
+        if !std::path::Path::new(tmp_dir).exists() {
+            std::fs::create_dir_all(tmp_dir).unwrap();
+        }
+        std::fs::write(
+            format!("{}/{}.json", tmp_dir, (*timestamp / 1000.0) as i64),
+            ser_fps,
+        )
+        .unwrap();
     }
 }

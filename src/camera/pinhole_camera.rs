@@ -119,9 +119,23 @@ pub struct PinholeCamera {
 
 impl PinholeCamera {
     pub fn new(camera_file: &str) -> Self {
+        let parameters = PinholeParameters::read_from_yaml(camera_file);
+        let inv_k11 = 1.0 / parameters.fx;
+        let inv_k13 = -parameters.cx / parameters.fx;
+        let inv_k22 = 1.0 / parameters.fy;
+        let inv_k23 = -parameters.cy / parameters.fy;
+        let has_distortion = parameters.k1 != 0.0
+            || parameters.k2 != 0.0
+            || parameters.p1 != 0.0
+            || parameters.p2 != 0.0;
+
         Self {
-            parameters: PinholeParameters::read_from_yaml(camera_file),
-            ..Default::default()
+            parameters,
+            inv_k11,
+            inv_k13,
+            inv_k22,
+            inv_k23,
+            has_distortion,
         }
     }
 

@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use nalgebra::{Rotation3, Vector3};
-use opencv::core::*;
+use opencv::{calib3d::FM_RANSAC, core::*};
 
 use crate::{
     config::{FOCAL_LENGTH, MIN_PARALLAX},
@@ -11,7 +11,7 @@ use crate::{
 use super::WINDOW_SIZE;
 
 #[derive(Debug, Default)]
-struct FeaturePerFrame(PointFeature, f64);
+pub struct FeaturePerFrame(pub PointFeature, pub f64);
 
 #[allow(dead_code)]
 #[derive(Debug, Default)]
@@ -26,7 +26,7 @@ pub enum FeatureSolveFlag {
 }
 
 #[derive(Debug, Default)]
-struct FeaturePerId {
+pub struct FeaturePerId {
     /// 特征点的id
     pub feature_id: i32,
     /// 特征点的起始帧
@@ -58,7 +58,7 @@ impl FeaturePerId {
 #[derive(Debug, Default)]
 pub struct FeatureManager {
     /// 所有特征点
-    features: Vec<FeaturePerId>,
+    pub features: Vec<FeaturePerId>,
 
     /* 特征点 是否可使用局部变量？ */
     /// 新增的特征点数量
@@ -200,26 +200,129 @@ impl FeatureManager {
         });
     }
 
-    /// removeFront
-    pub fn remove_front(&mut self, frame_count: i32) {
-        // TODO remove_front 边缘化？
-        self.features.retain(|feat| {
-            if feat.start_frame == frame_count {
-                // feat.start_frame -= 1;
-            } else {
-                if feat.end_frame_id() < frame_count - 1 {
-                    // 说明当前特征点没有追踪到当前帧，之前的数据不需要修改
-                }
-                let j = WINDOW_SIZE - 1 - feat.start_frame; // 最多有 j 个特征数据
+    /// 获取两帧之间的共识帧
+    pub fn get_corresponding_points(
+        &self,
+        frame_left: i32,
+        frame_right: i32,
+    ) -> (Vec<(Point2f, Point2f)>, f64) {
+        let mut sum_parallax = 0f64;
+        let corres = if frame_left > frame_right {
+            vec![]
+        } else {
+            self.features
+                .iter()
+                .filter_map(|it| {
+                    if it.start_frame <= frame_left && frame_right <= it.end_frame_id() {
+                        let index_left = (frame_left - it.start_frame) as usize;
+                        let index_right = (frame_right - it.start_frame) as usize;
+                        // point match
+                        let left_point = &it.point_features[index_left].0.point;
+                        let right_point = &it.point_features[index_right].0.point;
 
-                // 特征点追踪到了当前帧
-                // feat.point_features
-                if feat.point_features.len() == 0 {
-                    //
+                        let left = Point2f::new(left_point.x as f32, left_point.y as f32);
+                        let right = Point2f::new(right_point.x as f32, right_point.y as f32);
+                        let parallax = (left_point - right_point).norm();
+                        sum_parallax += parallax;
+                        // 计算视差
+                        Some((left, right))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        let average_parallax = if corres.len() > 0 {
+            sum_parallax / corres.len() as f64
+        } else {
+            0.0
+        };
+        (corres, average_parallax * FOCAL_LENGTH)
+    }
+
+    // solveRelativeRT 根据共视点求解相对位姿
+    pub fn solve_relative_rt(
+        &self,
+        corres: &Vec<(Point2f, Point2f)>,
+    ) -> Option<(nalgebra::Rotation3<f64>, nalgebra::Vector3<f64>)> {
+        // corres size > 20
+        // let
+        let ll = corres
+            .iter()
+            .map(|(l, _)| l.clone())
+            .collect::<Vector<Point2f>>();
+        let rr = corres
+            .iter()
+            .map(|(_, r)| r.clone())
+            .collect::<Vector<Point2f>>();
+
+        let mut mask = Vector::<u8>::default();
+        let fund_mat = opencv::calib3d::find_fundamental_mat_1(
+            &ll,
+            &rr,
+            FM_RANSAC,
+            0.3 / FOCAL_LENGTH,
+            0.99,
+            &mut mask,
+        )
+        .unwrap();
+
+        // 无需校准相机内参，已经校验过
+        let cam_mat = Mat::eye(3, 3, CV_32F).unwrap().to_mat().unwrap();
+
+        let mut rot = Mat::default();
+        let mut trans = Mat::default();
+        let inlier_cnt = opencv::calib3d::recover_pose_estimated(
+            &fund_mat, &ll, &rr, &cam_mat, &mut rot, &mut trans, &mut mask,
+        )
+        .unwrap();
+
+        let mut rot_mat = nalgebra::Matrix3::default();
+        let mut trans_vec = nalgebra::Vector3::default();
+        for i in 0..3 {
+            for j in 0..3 {
+                rot_mat[(i, j)] = *rot.at_2d::<f64>(i as i32, j as i32).unwrap();
+            }
+            trans_vec[i] = *trans.at::<f64>(i as i32).unwrap();
+        }
+        let rot = Rotation3::from_matrix(&rot_mat);
+        let trans = -(rot * trans_vec);
+        if inlier_cnt > 12 {
+            Some((rot, trans))
+        } else {
+            None
+        }
+    }
+
+    /// removeFront
+    pub fn remove_new(&mut self, frame_count: i32) {
+        self.features.iter_mut().for_each(|it| {
+            if it.start_frame == frame_count {
+                // 最新帧滑动成次新帧
+                it.start_frame -= 1;
+            } else {
+                // 次新帧该点仍然被追踪
+                if it.end_frame_id() >= frame_count - 1 {
+                    let second_new = (frame_count - 1 - it.start_frame) as usize; // second new frame
+                    it.point_features.remove(second_new as usize);
                 }
             }
-            true
         });
+        // remove empty features
+        self.features.retain(|it| it.point_features.len() > 0);
+    }
+    /// remove first frame
+    pub fn remove_old(&mut self) {
+        self.features.iter_mut().for_each(|it| {
+            if it.start_frame != 0 {
+                it.start_frame -= 1;
+            } else {
+                it.point_features.remove(0);
+            }
+        });
+        // remove empty features
+        self.features.retain(|it| it.point_features.len() > 0);
     }
 
     /// Finish: compensatedParallax2 视差补偿
@@ -310,9 +413,9 @@ impl FeatureManager {
         // 遍历所有特征点: 遍历所有特征点，计算平均视差
         self.features.iter().for_each(|it_per_id| {
             // 1. 某一个特征点追踪开始的帧号 < 当前帧号 - 2 ==> 说明该特征点已经被追踪了超过2帧
-            // 2. 某一个特征点追踪开始的帧号 + 特征点追踪的帧数 - 1 >= 当前帧号 - 1 ==> 说明该特征点已经追踪到当前帧号
+            // 2. 某一个特征点追踪开始的帧号 + 特征点追踪的帧数 - 1 >= 当前帧号 - 1 ==> 说明该特征点已经追踪到当前帧号的前一帧
             if it_per_id.start_frame <= frame_count - 2
-                && it_per_id.start_frame + (it_per_id.point_features.len() as i32) >= frame_count
+                && it_per_id.end_frame_id() >= frame_count - 1
             {
                 // [x] compensatedParallax2
                 parallax_sum += self.compensated_parallax2(it_per_id, frame_count);
