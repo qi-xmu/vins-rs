@@ -303,29 +303,28 @@ where
 
                 for (i, it) in self.t_image_frame_map.iter_mut().enumerate() {
                     //
-                    if *it.0 == self.timestamps[i] as i64 {
-                        it.1.is_key_frame = true;
-                        it.1.rot_matrix = c_poses[i].rotation.inverse().to_rotation_matrix()
-                            * self.imu_rot_to_cam;
-                        it.1.trans_vector =
-                            -(c_poses[i].rotation.inverse() * c_poses[i].translation.vector);
-                        continue;
-                    } else if *it.0 > self.timestamps[i] as i64 {
-                        // continue;
-                    }
+                    // if *it.0 == self.timestamps[i] as i64 {
+                    //     it.1.is_key_frame = true;
+                    //     it.1.rot_matrix = c_poses[i].rotation.inverse().to_rotation_matrix()
+                    //         * self.imu_rot_to_cam;
+                    //     it.1.trans_vector =
+                    //         -(c_poses[i].rotation.inverse() * c_poses[i].translation.vector);
+                    //     continue;
+                    // } else if *it.0 > self.timestamps[i] as i64 {
+                    //     // continue;
+                    // }
 
-                    let mut rvec: Mat = global_cast::Quaterniond(c_poses[i].rotation).into();
-                    let mut tvec: Mat = global_cast::Vector3d(c_poses[i].translation.vector).into();
+                    // let mut rvec: Mat = global_cast::Quaterniond(c_poses[i].rotation).into();
+                    // let mut tvec: Mat = global_cast::Vector3d(c_poses[i].translation.vector).into();
                     //
                     it.1.is_key_frame = false;
                     // let pts_3_vector = Vector::new();
                     // let pts_2_vector = Vector::new();
 
-                    for (feature_id, point_feature) in it.1.points.iter() {
-                        if let Some(pt) = track_points.get(&feature_id) {
-                            // ????!!!
-                        }
-                    }
+                    // for (feature_id, point_feature) in it.1.points.iter() {
+                    // if let Some(pt) = track_points.get(&feature_id) {
+                    // }
+                    // }
                 }
                 true
             } else {
