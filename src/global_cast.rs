@@ -126,6 +126,7 @@ impl From<Mat> for Rotation3d {
         let rows = mat.rows();
         let cols = mat.cols();
         assert!(rows == 3 && cols == 3);
+
         let mut matrix = Matrix3::<f64>::zeros();
         for i in 0..3 {
             for j in 0..3 {

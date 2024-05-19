@@ -8,23 +8,27 @@ pub type SFMFeatureList = Vec<SFMFeature>; // feature_id : SFMFeature
 pub struct SFMFeature {
     pub state: bool,
     pub feature_id: i32,
-    pub start_frame: i32,
+    pub start_frame: usize,
     pub point2s: Vector<Point2d>, // frame_number : point feature
     pub point3: Point3d,
 }
 
 impl SFMFeature {
-    pub fn end_frame_id(&self) -> i32 {
-        self.start_frame + self.point2s.len() as i32 - 1
+    pub fn end_frame_id(&self) -> usize {
+        self.start_frame + self.point2s.len() - 1
     }
     pub fn get_by_fid(&self, frame_id: usize) -> Option<Point2d> {
-        let index = frame_id - self.start_frame as usize;
-        // 如果超出范围，返回None
-        self.point2s.get(index).ok()
+        if frame_id >= self.start_frame {
+            let index = frame_id - self.start_frame;
+            // 如果超出范围，返回None
+            self.point2s.get(index).ok()
+        } else {
+            None
+        }
     }
 }
 
-fn triangulate_point(
+pub fn triangulate_point(
     point_i: &Point2d,
     point_j: &Point2d,
     pose_i: &nalgebra::Matrix4<f64>,
@@ -73,6 +77,44 @@ fn triangulate_two_frames(
     }
 }
 
+pub fn solve_pnp(
+    object_points: &Vector<Point3d>,
+    image_points: &Vector<Point2d>,
+    quat: &nalgebra::UnitQuaternion<f64>,
+    tvec: &nalgebra::Vector3<f64>,
+) -> Option<(nalgebra::UnitQuaternion<f64>, nalgebra::Vector3<f64>)> {
+    let k = Mat::from_slice_2d(&crate::config::K).unwrap();
+    let d = Mat::default();
+
+    let mut rvec: Mat = global_cast::Quaterniond(quat.clone()).into();
+    let mut tvec: Mat = global_cast::Vector3d(tvec.clone()).into();
+
+    if !opencv::calib3d::solve_pnp(
+        object_points,
+        image_points,
+        &k,
+        &d,
+        &mut rvec,
+        &mut tvec,
+        true, // 是否使用rvec和tvec作为初始值
+        opencv::calib3d::SOLVEPNP_ITERATIVE,
+    )
+    .unwrap()
+    {
+        None
+    } else {
+        let rvec = global_cast::Vector3d::from(rvec).0;
+        let tvec = global_cast::Vector3d::from(tvec).0;
+        Some((
+            nalgebra::UnitQuaternion::from_axis_angle(
+                &nalgebra::Unit::new_normalize(rvec),
+                rvec.norm(),
+            ),
+            tvec,
+        ))
+    }
+}
+
 //
 // solveFrameByPnP
 fn solve_frame_by_pnp(
@@ -80,7 +122,7 @@ fn solve_frame_by_pnp(
     init_quat: &nalgebra::UnitQuaternion<f64>,
     init_trans: &nalgebra::Vector3<f64>,
     features: &mut SFMFeatureList,
-) -> Option<(nalgebra::Rotation3<f64>, nalgebra::Vector3<f64>)> {
+) -> Option<(nalgebra::UnitQuaternion<f64>, nalgebra::Vector3<f64>)> {
     let mut matched = (Vector::<Point3d>::default(), Vector::<Point2d>::default());
     for it in features.iter_mut() {
         if !it.state {
@@ -94,36 +136,8 @@ fn solve_frame_by_pnp(
     if matched.0.len() < 15 {
         return None;
     }
-    let k = Mat::from_slice_2d(&[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]).unwrap();
-    let d = Mat::default();
 
-    let mut rvec: Mat = global_cast::Quaterniond(init_quat.clone()).into();
-    let mut tvec: Mat = global_cast::Vector3d(init_trans.clone()).into();
-
-    if !opencv::calib3d::solve_pnp(
-        &matched.0,
-        &matched.1,
-        &k,
-        &d,
-        &mut rvec,
-        &mut tvec,
-        true, // 是否使用rvec和tvec作为初始值
-        opencv::calib3d::SOLVEPNP_ITERATIVE,
-    )
-    .unwrap()
-    {
-        return None; // falses
-    }
-    //
-    let rvec = global_cast::Vector3d::from(rvec).0;
-    let tvec = global_cast::Vector3d::from(tvec).0;
-
-    let rot = nalgebra::Rotation3::<f64>::from_axis_angle(
-        &nalgebra::Unit::new_normalize(rvec),
-        rvec.norm(),
-    );
-    let trans = tvec;
-    return Some((rot, trans));
+    solve_pnp(&matched.0, &matched.1, init_quat, init_trans)
 }
 
 pub fn sfm_construct(
@@ -134,7 +148,7 @@ pub fn sfm_construct(
     features: &mut SFMFeatureList,
 ) -> Option<(Vec<nalgebra::Isometry3<f64>>, HashMap<i32, Point3d>)> {
     let feature_number = features.len();
-    let mut c_poses = vec![nalgebra::Isometry3::<f64>::identity(); end as usize];
+    let mut c_poses = vec![nalgebra::Isometry3::<f64>::identity(); end];
     c_poses[start] = nalgebra::Isometry3::<f64>::from_parts(
         nalgebra::Translation::default(),
         nalgebra::UnitQuaternion::identity(),
@@ -150,10 +164,10 @@ pub fn sfm_construct(
         if i > start {
             let init_quat = c_poses[i - 1].rotation;
             let init_trans = c_poses[i - 1].translation.vector;
-            if let Some((rot, trans)) = solve_frame_by_pnp(i, &init_quat, &init_trans, features) {
+            if let Some((quat, trans)) = solve_frame_by_pnp(i, &init_quat, &init_trans, features) {
                 c_poses[i] = nalgebra::Isometry3::<f64>::from_parts(
                     nalgebra::Translation::from(trans),
-                    nalgebra::UnitQuaternion::from(rot),
+                    quat,
                 );
             } else {
                 return None;
@@ -182,16 +196,14 @@ pub fn sfm_construct(
     // 4: solve pnp l-1; triangulate l-1 ----- l
     //              l-2              l-2 ----- l
     for i in (0..start).rev() {
-        if let Some((rot, trans)) = solve_frame_by_pnp(
+        if let Some((quat, trans)) = solve_frame_by_pnp(
             i,
             &c_poses[i + 1].rotation,
             &c_poses[i + 1].translation.vector,
             features,
         ) {
-            c_poses[i] = nalgebra::Isometry3::<f64>::from_parts(
-                nalgebra::Translation::from(trans),
-                nalgebra::UnitQuaternion::from(rot),
-            );
+            c_poses[i] =
+                nalgebra::Isometry3::<f64>::from_parts(nalgebra::Translation::from(trans), quat);
             triangulate_two_frames(
                 i,
                 start,
@@ -210,8 +222,8 @@ pub fn sfm_construct(
             continue;
         }
         if features[i].point2s.len() >= 2 {
-            let frame_0 = features[i].start_frame as usize;
-            let frame_1 = features[i].end_frame_id() as usize;
+            let frame_0 = features[i].start_frame;
+            let frame_1 = features[i].end_frame_id();
 
             let point_0 = features[i].get_by_fid(frame_0).unwrap();
             let point_1 = features[i].get_by_fid(frame_1).unwrap();
@@ -226,12 +238,12 @@ pub fn sfm_construct(
         }
     }
     // 展示结果
-    for i in 0..end {
-        if features[i].state {
-            print!("feature_id: {} ", features[i].feature_id);
-            println!("point3: {:?}", features[i].point3);
-        }
-    }
+    // for i in 0..end {
+    //     if features[i].state {
+    //         print!("feature_id: {} ", features[i].feature_id);
+    //         println!("point3: {:?}", features[i].point3);
+    //     }
+    // }
 
     // full BA
 

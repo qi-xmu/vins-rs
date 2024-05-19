@@ -7,7 +7,7 @@ pub struct IntegrationBase();
 #[derive(Debug, Default)]
 pub struct ImageFrame {
     /// 时间戳
-    pub timestamp: f64,
+    pub timestamp: u64,
     /// 是否为关键帧
     pub is_key_frame: bool,
     /// 特征点
@@ -22,7 +22,7 @@ pub struct ImageFrame {
 
 impl ImageFrame {
     #[allow(dead_code)]
-    pub fn new(timestamp: f64, points: &PointFeatureMap) -> Self {
+    pub fn new(timestamp: u64, points: &PointFeatureMap) -> Self {
         Self {
             timestamp,
             points: points.clone(),

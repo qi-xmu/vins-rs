@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+/* 静态常量：无需更改 */
+pub const K: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
 /* Feature Tracker */
 /// 特征点最大数量
 pub const MAX_CNT: i32 = 150;
@@ -16,8 +19,10 @@ pub const BORDER_SIZE: i32 = 5;
 /// 是否使用IMU
 pub const USE_IMU: bool = false;
 /// 窗口大小
-pub const WINDOW_SIZE: i32 = 10;
+pub const WINDOW_SIZE: usize = 10;
 /// 相机焦距
 pub const FOCAL_LENGTH: f64 = 460.0;
 /// 窗口内最小视差
 pub static MIN_PARALLAX: f64 = 0.5;
+/// INIT_DEPTH
+pub const INIT_DEPTH: f64 = 5.0;

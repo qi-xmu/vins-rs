@@ -16,9 +16,9 @@ where
 {
     /* 时间 */
     /// 上一帧的时间
-    prev_time: f64,
+    prev_time: u64,
     /// 当前帧的时间
-    cur_time: f64,
+    cur_time: u64,
 
     /* 图像 */
     /// 图像的行数
@@ -202,13 +202,13 @@ where
     /// * `cur_id_pts` - id 和当前帧特征点的映射。
     /// * `prev_id_pts` - id 和上一帧特征点的映射。
     fn pts_velocity(
-        // &self,
-        dt: f64,
+        dt: u64, // ns
         ids: &Vector<i32>,
         pts: &Vector<Point2f>,
         cur_id_pts: &mut HashMap<i32, Point2f>,
         prev_id_pts: &HashMap<i32, Point2f>,
     ) -> Vector<Point2f> {
+        let dt = dt as f64 / 1e9;
         let mut pts_velocity = Vector::<Point2f>::new();
         cur_id_pts.clear();
         // 将 id 和当前帧特征点的映射存储到 cur_id_pts 中
@@ -310,7 +310,7 @@ where
     /// # Note
     /// 该方法会在内部维护一个状态，用于跟踪特征点。
     /// 该方法会返回一个 `FeatureFrame` 结构体，其中包含了当前图像中的特征点。
-    pub fn track_image(&mut self, timestamp: f64, img: &Mat) -> FeatureFrame {
+    pub fn track_image(&mut self, timestamp: u64, img: &Mat) -> FeatureFrame {
         self.cur_time = timestamp; // 当前时间
         self.cur_img = img.clone(); // 当前图像
         self.row = img.rows(); // 图像行数
@@ -553,6 +553,7 @@ pub struct PointFeature {
     pub velocity: nalgebra::Vector2<f64>,
 }
 
+/// i32: feature_id -> PointFeature
 pub type PointFeatureMap = HashMap<i32, PointFeature>;
 
 /// 一个帧的所有特征信息
@@ -560,7 +561,7 @@ pub type PointFeatureMap = HashMap<i32, PointFeature>;
 #[derive(Debug, Default, Clone)]
 pub struct FeatureFrame {
     /// 当前帧时间戳
-    pub timestamp: f64,
+    pub timestamp: u64,
     /// 当前帧中的特征点的所有特征信息，包括特征点在归一化平面的坐标、图像坐标、速度以及相机id。
     pub point_features: PointFeatureMap,
     /// 当前帧的图像

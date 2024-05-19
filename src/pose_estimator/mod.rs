@@ -6,16 +6,14 @@ mod image_frame;
 mod sfm;
 
 use anyhow::Result;
-use nalgebra::AbstractRotation;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::feature_trakcer::FeatureFrame;
 use crate::{config::*, global_cast};
 
-use crate::{camera::CameraTrait, feature_trakcer::FeatureTracker};
 use feature_manager::FeatureManager;
 
-use opencv::core::{Mat, Point2d, Vector};
+use opencv::core::{Mat, Point2d, Point3d, Vector};
 
 use self::image_frame::ImageFrame;
 
@@ -39,39 +37,70 @@ enum SolverFlag {
     Initial,
 }
 
+/// 根据帧号维护呀一个窗口大小为 [WINDOW_SIZE] 的时间戳窗口
 #[derive(Debug, Default)]
-pub struct Estimator<Camera>
-where
-    Camera: CameraTrait,
-{
+struct EstimatorImageWindows {
+    pub timestamps: [u64; WINDOW_SIZE + 1],
+    // pub diff_times: [i64; WINDOW_SIZE + 1],
+    pub images: [Mat; WINDOW_SIZE + 1],
+    pub rot_mats: [nalgebra::Rotation3<f64>; WINDOW_SIZE + 1],
+    pub trans_vecs: [nalgebra::Vector3<f64>; WINDOW_SIZE + 1],
+    // pub vel_vecs: [nalgebra::Vector3<f64>; WINDOW_SIZE + 1],
+}
+
+impl EstimatorImageWindows {
+    pub fn forword(&mut self) {
+        for i in 0..WINDOW_SIZE {
+            self.timestamps.swap(i, i + 1);
+            self.images.swap(i, i + 1);
+            self.rot_mats.swap(i, i + 1);
+            self.trans_vecs.swap(i, i + 1);
+        }
+        self.timestamps[WINDOW_SIZE] = self.timestamps[WINDOW_SIZE - 1];
+        self.images[WINDOW_SIZE] = self.images[WINDOW_SIZE - 1].clone();
+        self.rot_mats[WINDOW_SIZE] = self.rot_mats[WINDOW_SIZE - 1];
+        self.trans_vecs[WINDOW_SIZE] = self.trans_vecs[WINDOW_SIZE - 1];
+    }
+
+    fn clear(&mut self) {
+        self.timestamps = [0; WINDOW_SIZE + 1];
+        // ? images
+        self.rot_mats = [nalgebra::Rotation3::identity(); WINDOW_SIZE + 1];
+        self.trans_vecs = [nalgebra::Vector3::zeros(); WINDOW_SIZE + 1];
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Estimator {
     /// 输入图像计数
     pub input_image_cnt: i32,
 
-    pub prev_time: f64,
-    pub cur_time: f64,
+    pub prev_time: u64,
+    pub cur_time: u64,
     /// td 校准时间
-    pub td: f64,
+    pub td: u64,
     /// 初始化时间
-    pub initial_timestamp: f64,
+    pub initial_timestamp: u64,
 
     // IMU buffer
-    pub acce_buf: VecDeque<(f64, [f64; 3])>,
-    pub gyro_buf: VecDeque<(f64, [f64; 3])>,
+    pub acce_buf: VecDeque<(u64, [f64; 3])>,
+    pub gyro_buf: VecDeque<(u64, [f64; 3])>,
 
     /// 帧计数
-    pub frame_count: i32,
+    pub frame_count: usize,
 
     /* ? 窗口 是否可以合并成一个窗口, 不合并的问题：长度管理可能出问题 */
+    image_window: EstimatorImageWindows,
     /// 时间戳窗口
-    pub timestamps: VecDeque<f64>,
+    // pub timestamps: VecDeque<u64>,
     /// 时间间隔窗口
-    pub diff_times: VecDeque<f64>,
+    // pub diff_times: VecDeque<f64>,
     /// ? 图像窗口, 缓冲的必要性？
     pub images: VecDeque<Mat>,
     /// 旋转矩阵窗口
-    pub rot_mats: VecDeque<nalgebra::Rotation3<f64>>,
+    // pub rot_mats: VecDeque<nalgebra::Rotation3<f64>>,
     /// 平移向量窗口
-    pub trans_vecs: VecDeque<nalgebra::Vector3<f64>>,
+    // pub trans_vecs: VecDeque<nalgebra::Vector3<f64>>,
     /// 速度向量窗口
     pub vel_vecs: VecDeque<nalgebra::Vector3<f64>>,
 
@@ -84,17 +113,13 @@ where
     /// 角速度偏置窗口
     pub bias_gyros: VecDeque<nalgebra::Vector3<f64>>,
 
-    /// IMU坐标系到相机坐标系的变换
+    /// body 到相机坐标系的变换
     pub imu_rot_to_cam: nalgebra::Rotation3<f64>, // ric
     pub imu_trans_to_cam: nalgebra::Vector3<f64>, // tic
 
     /// 时间戳和图像帧的映射
-    pub t_image_frame_map: HashMap<i64, ImageFrame>,
+    pub t_image_frame_map: HashMap<u64, ImageFrame>,
 
-    /* 特征 */
-    /// 提取特征点
-    #[deprecated]
-    feature_tracker: FeatureTracker<Camera>,
     /// 每一帧的特征点缓冲：包括时间戳，图像，该图像所有特征点。
     feature_frame_buf: VecDeque<FeatureFrame>,
     /// 特征管理器，提取每一帧的特征点，按照时间顺序管理特征点。
@@ -106,88 +131,36 @@ where
     // pub key_poses: Vec<nalgebra::Vector3<f64>>,
 }
 
-impl<Camera> Estimator<Camera>
-where
-    Camera: CameraTrait,
-{
+impl Estimator {
     #[allow(dead_code)]
     pub fn new() -> Self {
-        let mut _self = Self {
-            ..Default::default()
-        };
-        let size = (WINDOW_SIZE + 1) as usize;
-        _self.timestamps.reserve(size);
-        _self.diff_times.reserve(size);
-        _self.images.reserve(size);
-        _self.rot_mats.reserve(size);
-        _self.trans_vecs.reserve(size);
-        _self.vel_vecs.reserve(size);
-        _self.acce_vecs.reserve(size);
-        _self.gyro_vecs.reserve(size);
-        _self.bias_acces.reserve(size);
-        _self.bias_gyros.reserve(size);
-        _self.t_image_frame_map.reserve(size);
-        _self.feature_frame_buf.reserve(size);
-
-        // ? add default
-        _self.rot_mats.push_back(Default::default());
-        _self.trans_vecs.push_back(Default::default());
-        _self.vel_vecs.push_back(Default::default());
-        _self.bias_acces.push_back(Default::default());
-        _self.bias_gyros.push_back(Default::default());
-
-        _self
+        Default::default()
     }
-    pub fn input_feature(&mut self, timestamp: f64, feature_frame: &FeatureFrame) -> Result<()> {
-        let _t = timestamp;
-        let _f = feature_frame;
-        let _a = &feature_frame.image;
+    pub fn input_feature(&mut self, feature_frame: &FeatureFrame) -> Result<()> {
         let feature_frame = feature_frame.clone();
-        //
         self.feature_frame_buf.push_back(feature_frame);
         self.process_measurements();
-
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    #[deprecated = "use input_feature instead"]
-    pub fn input_image(&mut self, timestamp: f64, img: &Mat) {
-        // self.input_image_cnt += 1;
-        // let feature_frame = self.feature_tracker.track_image(timestamp, &img);
-        // let nimg = img.clone();
-        // let img_track = self.feature_tracker.get_track_image().clone();
-
-        if MULTIPLE_THREAD {
-            // self.feature_frame_buf.push_back(feature_frame);
-            // self.process_measurements();
-        } else {
-            // self.feature_frame_buf.push_back(feature_frame);
-            // self.process_measurements();
-        }
     }
 
     pub fn slide_window(&mut self) {
         // TODO slide_window
         match self.marginalization_flag {
             MarginalizationFlag::MarginOld => {
-                // ? Headers back_R0 back_P0
+                let t_front = self.image_window.timestamps[0];
+                let first_rot = self.image_window.rot_mats[0];
+                let first_trans = self.image_window.trans_vecs[0];
                 if self.frame_count == WINDOW_SIZE {
-                    let t_front = *self.timestamps.front().unwrap() as i64;
+                    self.image_window.forword();
+
                     match self.solver_flag {
                         SolverFlag::Initial => {
-                            // [x] all_image_frame -> t_image_frame_map
                             self.t_image_frame_map.remove(&t_front);
                         }
                         _ => {}
                     }
-                    //
-                    self.timestamps.pop_front();
-                    self.images.pop_front();
-                    self.rot_mats.pop_front();
-                    self.trans_vecs.pop_front();
-                    // [ ] USE_IMU
-                    // [ ] slideWindowOld --> feature_manager
+
+                    // TODO USE_IMU
 
                     match self.solver_flag {
                         SolverFlag::Initial => {
@@ -195,16 +168,15 @@ where
                         }
                         SolverFlag::NonLinear => {
                             // TODO 这里需要移除深度
+                            let _f_rot = first_rot;
+                            let _f_trans = first_trans;
                             // self.feature_manager.remove_old();
                         }
                     }
                 }
             }
             MarginalizationFlag::MarginSecondNew => {
-                self.timestamps.pop_front();
-                self.images.pop_front();
-                self.rot_mats.pop_front();
-                self.trans_vecs.pop_front();
+                self.image_window.forword();
 
                 // [ ] USE_IMU
                 // [ ] slideWindowNew 边缘化
@@ -225,7 +197,6 @@ where
     /// failureDetection
     fn failure_detection(&mut self) -> bool {
         // TODO failureDetection
-        log::warn!("failure_detection");
         return false;
     }
 
@@ -250,7 +221,7 @@ where
         // TODO:optimization 非线性优化
     }
     /// relativePose 使用五点法计算相对位姿
-    fn relative_pose(&self) -> Option<(i32, nalgebra::Rotation3<f64>, nalgebra::Vector3<f64>)> {
+    fn relative_pose(&self) -> Option<(usize, nalgebra::Rotation3<f64>, nalgebra::Vector3<f64>)> {
         for i in 0..WINDOW_SIZE {
             // matched points
             let (corres, average_parallax) = self
@@ -265,17 +236,25 @@ where
         }
         None
     }
+
+    /// visualInitialAlign
+    fn visual_initial_align(&mut self) {
+        // TODO visualInitialAlign
+        // TODO VisualIMUAlignment
+
+        // 状态同步到窗口中
+        for i in 0..self.frame_count + 1 {
+            let t = self.image_window.timestamps[i];
+            self.image_window.rot_mats[i] = self.t_image_frame_map[&t].rot_matrix;
+            self.image_window.trans_vecs[i] = self.t_image_frame_map[&t].trans_vector;
+            self.t_image_frame_map.get_mut(&t).unwrap().is_key_frame = true;
+        }
+    }
     /// initial_structure
     fn initial_structure(&mut self) -> bool {
         // TODO initial_structure
         if let Some((i, rot, trans)) = self.relative_pose() {
             // SFM
-            // log::info!("initial_structure i:{} rot:{} trans:{}", i, rot, trans);
-            // frame i, rot_i: rot , trans_i : trans
-            // 求解 i --> frame_count 的相对位姿
-            // 条件：
-            // 1. i 时刻的姿态，位移。
-
             // 路标i第 j 帧的特征
             let mut sfm_list = sfm::SFMFeatureList::new();
             for it in self.feature_manager.features.iter() {
@@ -294,38 +273,77 @@ where
                 };
                 sfm_list.push(item);
             }
-            let i = i as usize; // 开始
-            let e = self.frame_count as usize + 1;
+
             if let Some((c_poses, track_points)) =
-                sfm::sfm_construct(i, e, rot, trans, &mut sfm_list)
+                sfm::sfm_construct(i, self.frame_count + 1, rot, trans, &mut sfm_list)
             {
-                // solve pnp for all frame
+                let mut i = 0;
+                // index feature_id, image_frame
+                for (&timestamp, image_frame) in self.t_image_frame_map.iter_mut() {
+                    if timestamp == self.image_window.timestamps[i] {
+                        image_frame.is_key_frame = true;
+                        image_frame.rot_matrix = c_poses[i].rotation.inverse().to_rotation_matrix()
+                            * self.imu_rot_to_cam;
+                        image_frame.trans_vector =
+                            -(c_poses[i].rotation.inverse() * c_poses[i].translation.vector);
+                        i += 1;
+                        continue;
+                    } else if timestamp > self.image_window.timestamps[i] {
+                        i += 1;
+                    }
 
-                for (i, it) in self.t_image_frame_map.iter_mut().enumerate() {
+                    image_frame.is_key_frame = false;
+                    let mut rvec: Mat = global_cast::Quaterniond(c_poses[i].rotation).into();
+                    let mut tvec: Mat = global_cast::Vector3d(c_poses[i].translation.vector).into();
                     //
-                    // if *it.0 == self.timestamps[i] as i64 {
-                    //     it.1.is_key_frame = true;
-                    //     it.1.rot_matrix = c_poses[i].rotation.inverse().to_rotation_matrix()
-                    //         * self.imu_rot_to_cam;
-                    //     it.1.trans_vector =
-                    //         -(c_poses[i].rotation.inverse() * c_poses[i].translation.vector);
-                    //     continue;
-                    // } else if *it.0 > self.timestamps[i] as i64 {
-                    //     // continue;
-                    // }
+                    let mut pts_3_vector = Vector::<Point3d>::new();
+                    let mut pts_2_vector = Vector::<Point2d>::new();
 
-                    // let mut rvec: Mat = global_cast::Quaterniond(c_poses[i].rotation).into();
-                    // let mut tvec: Mat = global_cast::Vector3d(c_poses[i].translation.vector).into();
+                    for (feature_id, point_feature) in image_frame.points.iter() {
+                        if let Some(pt) = track_points.get(&feature_id) {
+                            pts_3_vector.push(*pt);
+                            pts_2_vector
+                                .push(Point2d::new(point_feature.point.x, point_feature.point.y));
+                        }
+                    }
+
+                    if pts_3_vector.len() < 6 {
+                        log::info!("pts_3_vector.len() < 6: {}", pts_3_vector.len());
+                        return false;
+                    }
+                    let k = Mat::from_slice_2d(&crate::config::K).unwrap();
+                    let d = Mat::default();
+
+                    if !opencv::calib3d::solve_pnp(
+                        &pts_3_vector,
+                        &pts_2_vector,
+                        &k,
+                        &d,
+                        &mut rvec,
+                        &mut tvec,
+                        true,
+                        opencv::calib3d::SOLVEPNP_ITERATIVE,
+                    )
+                    .unwrap()
+                    {
+                        log::info!("solve_pnp failed");
+                        return false;
+                    }
                     //
-                    it.1.is_key_frame = false;
-                    // let pts_3_vector = Vector::new();
-                    // let pts_2_vector = Vector::new();
-
-                    // for (feature_id, point_feature) in it.1.points.iter() {
-                    // if let Some(pt) = track_points.get(&feature_id) {
-                    // }
-                    // }
+                    let rvec = global_cast::Vector3d::from(rvec).0;
+                    let tvec = global_cast::Vector3d::from(tvec).0;
+                    let quat = nalgebra::UnitQuaternion::from_axis_angle(
+                        &nalgebra::UnitVector3::new_normalize(rvec),
+                        rvec.norm(),
+                    )
+                    .inverse();
+                    image_frame.rot_matrix =
+                        quat.to_rotation_matrix() * self.imu_rot_to_cam.transpose();
+                    image_frame.trans_vector = quat * -tvec;
                 }
+                // TODO visualInitialAlign
+
+                self.visual_initial_align();
                 true
             } else {
                 self.marginalization_flag = MarginalizationFlag::MarginOld;
@@ -336,11 +354,11 @@ where
             false
         }
     }
-    fn process_image(&mut self, frame: &FeatureFrame, timestamp: f64) {
-        log::info!("process_image frame_count: {}", self.frame_count);
-        self.timestamps.push_back(timestamp);
+    fn process_image(&mut self, frame: &FeatureFrame, timestamp: u64) {
+        self.image_window.timestamps[self.frame_count] = timestamp;
+        self.image_window.images[self.frame_count] = frame.image.clone();
 
-        // [x] addFeatureCheckParallax
+        // 检查视差
         self.marginalization_flag = if self.feature_manager.add_feature_check_parallax(
             self.frame_count,
             &frame.point_features,
@@ -350,101 +368,84 @@ where
         } else {
             MarginalizationFlag::MarginSecondNew
         };
-        log::info!("marginalization_flag: {:?}", self.marginalization_flag);
 
         let mut image_frame = image_frame::ImageFrame::new(timestamp, &frame.point_features);
         image_frame.pre_integration = image_frame::IntegrationBase::default(); // FIXME:tmp_pre_integration
-
-        // [x] all_image_frame and tmp_pre_integration
-        self.t_image_frame_map.insert(timestamp as i64, image_frame);
+        self.t_image_frame_map.insert(timestamp, image_frame);
 
         // TODO ESTIMATE_EXTRINSIC == 2
 
         match self.solver_flag {
-            // sadf
             SolverFlag::Initial => {
-                // Initial
                 if true {
-                    let result = false;
+                    let mut result = false;
                     if self.frame_count == WINDOW_SIZE {
-                        if timestamp - self.initial_timestamp > 0.1 {
+                        if timestamp - self.initial_timestamp > 200_000_000 {
                             // 初始化
-                            log::info!("initial_structure");
-                            self.initial_structure();
+                            result = self.initial_structure();
                             self.initial_timestamp = timestamp;
                         }
                     }
                     if result {
-                        // [ ] optimization
                         self.optimization();
-                        // [ ] updateLatestStates
                         self.update_latest_states();
                         self.solver_flag = SolverFlag::NonLinear;
+                        log::info!("initial success");
                     }
-                    // [ ] slideWindow
                     self.slide_window();
                 }
 
                 // ? 填充之前的数据 add: >=1
                 if self.frame_count < WINDOW_SIZE {
                     self.frame_count += 1;
-                    self.rot_mats
-                        .push_back(self.rot_mats.back().unwrap().clone());
-                    self.trans_vecs
-                        .push_back(self.trans_vecs.back().unwrap().clone());
-                    self.vel_vecs
-                        .push_back(self.vel_vecs.back().unwrap().clone());
-                    self.bias_acces
-                        .push_back(self.bias_acces.back().unwrap().clone());
-                    self.bias_gyros
-                        .push_back(self.bias_gyros.back().unwrap().clone());
+                    self.image_window.rot_mats[self.frame_count] =
+                        self.image_window.rot_mats[self.frame_count - 1];
+                    self.image_window.trans_vecs[self.frame_count] =
+                        self.image_window.trans_vecs[self.frame_count - 1];
+                    // TODO IMU
                 }
             }
             SolverFlag::NonLinear => {
                 // NonLinear
                 if !USE_IMU {
-                    self.rot_mats.make_contiguous();
-                    // [x] self.feature_manager initFramePoseByPnP
                     self.feature_manager.init_frame_pose_by_pnp(
                         self.frame_count,
-                        &mut self.rot_mats,
-                        &mut self.trans_vecs,
+                        &mut self.image_window.rot_mats,
+                        &mut self.image_window.trans_vecs,
                         &self.imu_rot_to_cam,
                         &self.imu_trans_to_cam,
                     );
                 }
-                self.feature_manager.triangulate();
+                self.feature_manager.triangulate(
+                    &self.image_window.rot_mats,
+                    &self.image_window.trans_vecs,
+                    &self.imu_rot_to_cam,
+                    &self.imu_trans_to_cam,
+                );
                 self.optimization();
 
-                // [x] outliersRejection 移除异常点
-                let remove_ids = self.outliers_rejection();
-                // [x] self.feature_manager removeOutlier
+                let remove_ids = self.outliers_rejection(); // [ ] outliersRejection 移除异常点
                 self.feature_manager.remove_outlier(remove_ids);
-                // [ ] MULTIPLE_THREAD
+
+                //  MULTIPLE_THREAD
 
                 // [x] failureDetection
-                if self.failure_detection() {
-                    // [ ] ? self.failure_occur = true;
-                    // [x] clearState
-                    self.clear_state();
-                    // [x] setParameter
-                    self.set_parameters();
-                    return;
-                }
-                self.slide_window();
+                // if self.failure_detection() {
+                //     self.clear_state();
+                //     self.set_parameters();
+                //     return;
+                // }
 
-                // [x] f_manager.removeFailures();
+                self.slide_window();
                 self.feature_manager.remove_failures();
                 // [ ] key_poses;
-
-                // [ ] last_R
                 self.update_latest_states();
             }
         }
     }
 
     #[inline]
-    fn imu_available(&self, t: f64) -> bool {
+    fn imu_available(&self, t: u64) -> bool {
         if !self.acce_buf.is_empty() && t <= self.acce_buf.back().unwrap().0 {
             true
         } else {
@@ -460,24 +461,18 @@ where
                 let frame = self.feature_frame_buf.pop_front().unwrap();
                 let cur_time = frame.timestamp + self.td; // 校准时间
                 loop {
-                    // TODO: imu_available()
                     // 使用IMU等待IMU加载
                     if !USE_IMU || self.imu_available(cur_time) {
-                        //
                         break;
                     } else {
                         log::info!("wait for imu data");
-                        if !MULTIPLE_THREAD {
-                            return;
-                        }
+
                         // TODO sleep()
                     }
                 }
 
                 // TODO: USE_IMU getIMUInterval
-
                 // TODO: USE_IMU initFirstIMUPose and processIMU
-
                 // TODO: process_image()
 
                 self.process_image(&frame, frame.timestamp);
@@ -493,16 +488,16 @@ where
         self.gyro_buf.clear();
         self.feature_frame_buf.clear();
 
-        self.prev_time = -1.0;
-        self.cur_time = 0.0;
+        self.prev_time = 0;
+        self.cur_time = 0;
 
         self.input_image_cnt = 0;
-        self.initial_timestamp = 0.0;
+        self.initial_timestamp = 0;
 
         self.frame_count = 0;
-        self.diff_times.clear();
-        self.rot_mats.clear();
-        self.trans_vecs.clear();
+
+        self.image_window.clear();
+
         self.vel_vecs.clear();
         self.acce_vecs.clear();
         self.gyro_vecs.clear();
