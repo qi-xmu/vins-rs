@@ -144,10 +144,6 @@ impl FeatureManager {
                 let rot_tmp = cam_rot * imu_rot_to_cam.transpose();
                 rot_mats[frame_count] = rot_tmp;
                 trans_vecs[frame_count] = -(rot_tmp * imu_trans_to_cam) + cam_trans;
-
-                // log::info!("Init frame pose by PnP: {}", frame_count);
-                // log::info!("Rotation: {}", rot_mats[frame_count]);
-                // log::info!("Translation: {}", trans_vecs[frame_count]);
             }
         }
     }
@@ -166,7 +162,7 @@ impl FeatureManager {
             }
             if it.point_features.len() > 1 {
                 // [ ] 可以进行triangulate 计算
-                // p1
+                // p1 0
                 let i = it.start_frame;
                 let rot_i = rot_mats[i] * imu_rot_to_cam;
                 let tvec_i = rot_mats[i] * imu_trans_to_cam + trans_vecs[i];
@@ -178,7 +174,7 @@ impl FeatureManager {
                     nalgebra::UnitQuaternion::from_rotation_matrix(&rot_i),
                 );
 
-                // p2
+                // p2 1
                 let j = i + 1;
                 let rot_j = rot_mats[j] * imu_rot_to_cam;
                 let tvec_j = rot_mats[j] * imu_trans_to_cam + trans_vecs[j];
@@ -190,22 +186,23 @@ impl FeatureManager {
                     nalgebra::UnitQuaternion::from_rotation_matrix(&rot_j),
                 );
 
+                // 根据前两个点估计该特征点的深度。
                 let point0 = it.point_features[0].0.point;
                 let point1 = it.point_features[1].0.point;
                 let point_i = Point2d::new(point0.x, point0.y);
                 let point_j = Point2d::new(point1.x, point1.y);
 
-                if let Some(point3) = sfm::triangulate_point(
+                if let Some(point) = sfm::triangulate_point(
                     &point_i,
                     &point_j,
                     &pose_i.to_matrix(),
                     &pose_j.to_matrix(),
                 ) {
-                    let point3 = nalgebra::Vector3::new(point3.x, point3.y, point3.z);
-                    let point3 = rot_i * point3 + tvec_i;
-                    if point3.z > 0.0 {
-                        it.estimated_depth = point3.z;
-                        log::info!("Triangulate depth: {}", it.estimated_depth);
+                    let point = nalgebra::Vector3::new(point.x, point.y, point.z);
+                    let point = rot_i * point + tvec_i;
+                    log::info!("Triangulate depth: {}", point.z);
+                    if point.z > 0.0 {
+                        it.estimated_depth = point.z;
                     } else {
                         it.estimated_depth = INIT_DEPTH;
                     }

@@ -358,7 +358,7 @@ impl Estimator {
         self.image_window.timestamps[self.frame_count] = timestamp;
         self.image_window.images[self.frame_count] = frame.image.clone();
 
-        // 检查视差
+        // 检查视差，决定窗口的边缘化策略
         self.marginalization_flag = if self.feature_manager.add_feature_check_parallax(
             self.frame_count,
             &frame.point_features,
@@ -398,10 +398,12 @@ impl Estimator {
                 // ? 填充之前的数据 add: >=1
                 if self.frame_count < WINDOW_SIZE {
                     self.frame_count += 1;
+                    // image_window
                     self.image_window.rot_mats[self.frame_count] =
                         self.image_window.rot_mats[self.frame_count - 1];
                     self.image_window.trans_vecs[self.frame_count] =
                         self.image_window.trans_vecs[self.frame_count - 1];
+
                     // TODO IMU
                 }
             }
@@ -446,6 +448,7 @@ impl Estimator {
 
     #[inline]
     fn imu_available(&self, t: u64) -> bool {
+        return true;
         if !self.acce_buf.is_empty() && t <= self.acce_buf.back().unwrap().0 {
             true
         } else {
@@ -456,7 +459,6 @@ impl Estimator {
     fn process_measurements(&mut self) {
         // TODO: process measurements
         loop {
-            //
             if !self.feature_frame_buf.is_empty() {
                 let frame = self.feature_frame_buf.pop_front().unwrap();
                 let cur_time = frame.timestamp + self.td; // 校准时间
@@ -476,6 +478,13 @@ impl Estimator {
                 // TODO: process_image()
 
                 self.process_image(&frame, frame.timestamp);
+                self.prev_time = self.cur_time;
+
+                log::info!(
+                    "{} {}",
+                    *self.image_window.rot_mats.last().to_owned().unwrap(),
+                    self.image_window.trans_vecs.last().unwrap()
+                );
 
                 break;
             }
@@ -495,7 +504,7 @@ impl Estimator {
         self.initial_timestamp = 0;
 
         self.frame_count = 0;
-
+        // 图像
         self.image_window.clear();
 
         self.vel_vecs.clear();
