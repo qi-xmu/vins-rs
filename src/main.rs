@@ -23,6 +23,7 @@ mod config;
 mod dataset;
 mod feature_trakcer;
 mod global_cast; // 全局转换
+mod global_types;
 mod pose_estimator;
 mod save;
 
@@ -40,8 +41,8 @@ fn main() {
         .format_timestamp_nanos()
         .init();
 
-    // let path = "/home/qi/V201";
-    let path = "/Users/qi/Resources/Dataset/V201";
+    let path = "/home/qi/V201";
+    // let path = "/Users/qi/Resources/Dataset/V201";
     log::info!("path: {:?}", path);
     let dataset = dataset::DefaultDataset::new(path);
 
@@ -57,7 +58,9 @@ fn main() {
         if let Ok(img) = imgcodecs::imread(path, imgcodecs::IMREAD_GRAYSCALE) {
             let feature_frame = feature_tracker.track_image(*timestamp, &img);
 
+            let vecs = nalgebra::Vector3::new(0.0, 0.0, 0.0);
             estimator.input_feature(&feature_frame).unwrap();
+            estimator.input_imu(*timestamp, &vecs, &vecs).unwrap();
 
             let img_tracker = feature_tracker.get_track_image();
             opencv::imgproc::cvt_color(&img, &mut img_convert, imgproc::COLOR_GRAY2BGR, 0).unwrap();

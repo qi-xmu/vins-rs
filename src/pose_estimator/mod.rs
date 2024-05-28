@@ -9,6 +9,7 @@ use anyhow::Result;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::feature_trakcer::FeatureFrame;
+use crate::global_types::IMUData;
 use crate::{config::*, global_cast};
 
 use feature_manager::FeatureManager;
@@ -83,8 +84,7 @@ pub struct Estimator {
     pub initial_timestamp: u64,
 
     // IMU buffer
-    pub acce_buf: VecDeque<(u64, [f64; 3])>,
-    pub gyro_buf: VecDeque<(u64, [f64; 3])>,
+    pub imu_buf: VecDeque<IMUData>,
 
     /// 帧计数
     pub frame_count: usize,
@@ -129,6 +129,19 @@ pub struct Estimator {
     marginalization_flag: MarginalizationFlag,
     solver_flag: SolverFlag,
     // pub key_poses: Vec<nalgebra::Vector3<f64>>,
+
+    // time
+    latest_time: u64,
+    latest_vel: nalgebra::Vector3<f64>,
+    latest_pos: nalgebra::Vector3<f64>,
+    latest_quat: nalgebra::UnitQuaternion<f64>,
+
+    latest_acce: nalgebra::Vector3<f64>,
+    latest_gyro: nalgebra::Vector3<f64>,
+
+    latest_bias_acce: nalgebra::Vector3<f64>,
+    latest_bias_gyro: nalgebra::Vector3<f64>,
+    latest_gravity: nalgebra::Vector3<f64>,
 }
 
 impl Estimator {
@@ -136,6 +149,69 @@ impl Estimator {
     pub fn new() -> Self {
         Default::default()
     }
+
+    pub fn input_imu(
+        &mut self,
+        timestamp: u64,
+        acce: &nalgebra::Vector3<f64>,
+        gyro: &nalgebra::Vector3<f64>,
+    ) -> Result<()> {
+        self.imu_buf.push_back(IMUData {
+            timestamp,
+            acc: acce.clone(),
+            gyro: gyro.clone(),
+        });
+
+        match self.solver_flag {
+            SolverFlag::NonLinear => {
+                // TODO processIMU
+                // fastPredictIMU
+                let acce = nalgebra::Vector3::new(acce[0], acce[1], acce[2]);
+                let gyro = nalgebra::Vector3::new(gyro[0], gyro[1], gyro[2]);
+                self.fast_predict_imu(timestamp, acce, gyro);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn fast_predict_imu(
+        &mut self,
+        timestamp: u64,
+        acce: nalgebra::Vector3<f64>,
+        gyro: nalgebra::Vector3<f64>,
+    ) {
+        // TODO fast_predict_imu
+        let dt = (timestamp - self.latest_time) as f64;
+        self.latest_time = timestamp;
+
+        let un_acc_0 =
+            self.latest_quat * (self.latest_acce - self.latest_bias_acce) - self.latest_gravity;
+        let un_gyro = (self.latest_gyro + gyro) * 0.5 - self.latest_bias_gyro;
+
+        // 计算四元数变化量
+        let half_theta = un_gyro * dt * 0.5;
+        let delta_quat = nalgebra::UnitQuaternion::new_normalize(nalgebra::Quaternion::new(
+            1.0,
+            half_theta.x,
+            half_theta.y,
+            half_theta.z,
+        ));
+        self.latest_quat = self.latest_quat * delta_quat;
+
+        // 计算加速度
+        let un_arr_1 = self.latest_quat * (acce - self.latest_bias_acce) - self.latest_gravity;
+        let un_acc = 0.5 * (un_acc_0 + un_arr_1);
+
+        // 更新位置和速度
+        self.latest_pos = self.latest_pos + self.latest_vel * dt + 0.5 * un_acc * dt * dt; // S = S0 + V0 * t + 0.5 * a * t^2
+        self.latest_vel = self.latest_vel + un_acc * dt; // V = V0 + a * t
+
+        // 记录上一次的加速度和角速度
+        self.latest_acce = acce;
+        self.latest_gyro = gyro;
+    }
+
     pub fn input_feature(&mut self, feature_frame: &FeatureFrame) -> Result<()> {
         let feature_frame = feature_frame.clone();
         self.feature_frame_buf.push_back(feature_frame);
@@ -220,6 +296,7 @@ impl Estimator {
     fn optimization(&mut self) {
         // TODO:optimization 非线性优化
     }
+
     /// relativePose 使用五点法计算相对位姿
     fn relative_pose(&self) -> Option<(usize, nalgebra::Rotation3<f64>, nalgebra::Vector3<f64>)> {
         for i in 0..WINDOW_SIZE {
@@ -449,11 +526,67 @@ impl Estimator {
     #[inline]
     fn imu_available(&self, t: u64) -> bool {
         return true;
-        if !self.acce_buf.is_empty() && t <= self.acce_buf.back().unwrap().0 {
-            true
-        } else {
-            false
+    }
+
+    fn wait_imu_available(&mut self, t: u64) {
+        loop {
+            if self.imu_available(t) {
+                //
+                break;
+            } else {
+                log::info!("wait for imu data");
+                // FIXME sleep()
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
         }
+    }
+
+    fn get_imu_interval(&mut self, prev_time: u64, cur_time: u64) -> Option<Vec<IMUData>> {
+        let mut imu_vecs = vec![];
+        if !USE_IMU || self.imu_buf.is_empty() {
+            return None;
+        }
+        if cur_time <= self.imu_buf.back().unwrap().timestamp {
+            // 0 timestamp 1 acce
+            while self.imu_buf.back().unwrap().timestamp < prev_time {
+                self.imu_buf.pop_front();
+            }
+
+            while self.imu_buf.back().unwrap().timestamp < cur_time {
+                imu_vecs.push(self.imu_buf.pop_front().unwrap());
+            }
+            imu_vecs.push(self.imu_buf.front().unwrap().clone());
+            Some(imu_vecs)
+        } else {
+            log::info!("wait for imu data");
+            None
+        }
+    }
+
+    fn init_first_imu_pose(&mut self, imu_vecs: &Vec<IMUData>) {
+        //
+        log::info!("init_first_imu_pose");
+        // init_first_pose_flag = true;
+        let acce_average = imu_vecs
+            .iter()
+            .map(|it| it.acc)
+            .sum::<nalgebra::Vector3<f64>>()
+            / imu_vecs.len() as f64;
+
+        log::info!("acce_average: {}", acce_average);
+
+        // 计算重力向量夹角
+        let g0 = acce_average.normalize();
+        let g1 = nalgebra::Vector3::new(0.0, 0.0, 1.0);
+        let rot0 = nalgebra::Rotation3::from_axis_angle(
+            &nalgebra::Unit::new_normalize(g0.cross(&g1)),
+            g0.angle(&g1),
+        );
+        let yaw = rot0.euler_angles().2;
+        let rot0 = nalgebra::Rotation3::from_euler_angles(0.0, 0.0, -yaw) * rot0;
+
+        self.image_window.rot_mats[0] = rot0;
+        log::info!("rot0: {}", rot0);
     }
 
     fn process_measurements(&mut self) {
@@ -462,19 +595,27 @@ impl Estimator {
             if !self.feature_frame_buf.is_empty() {
                 let frame = self.feature_frame_buf.pop_front().unwrap();
                 let cur_time = frame.timestamp + self.td; // 校准时间
-                loop {
-                    // 使用IMU等待IMU加载
-                    if !USE_IMU || self.imu_available(cur_time) {
-                        break;
-                    } else {
-                        log::info!("wait for imu data");
+                self.wait_imu_available(cur_time);
 
-                        // TODO sleep()
+                let imu_vecs =
+                    if let Some(imu_vecs) = self.get_imu_interval(self.prev_time, cur_time) {
+                        imu_vecs
+                    } else {
+                        vec![]
+                    };
+
+                if USE_IMU {
+                    // TODO: USE_IMU initFirstIMUPose and processIMU
+                    let init_first_pose_flag = true;
+                    if init_first_pose_flag {
+                        //
+                        self.init_first_imu_pose(&imu_vecs);
+                    }
+
+                    for imu in imu_vecs.iter() {
+                        
                     }
                 }
-
-                // TODO: USE_IMU getIMUInterval
-                // TODO: USE_IMU initFirstIMUPose and processIMU
                 // TODO: process_image()
 
                 self.process_image(&frame, frame.timestamp);
@@ -493,8 +634,7 @@ impl Estimator {
 
     /// clearState
     fn clear_state(&mut self) {
-        self.acce_buf.clear();
-        self.gyro_buf.clear();
+        self.imu_buf.clear();
         self.feature_frame_buf.clear();
 
         self.prev_time = 0;
@@ -525,4 +665,14 @@ impl Estimator {
         // feature manager
         self.feature_manager.clear_state();
     }
+}
+
+#[test]
+fn test_norm() {
+    let v = nalgebra::Vector3::new(1.0, 2.0, 3.0);
+
+    let norm = v.norm();
+    println!("norm: {}", norm);
+    let v_norm = v.normalize();
+    println!("v_norm: {}", v_norm);
 }
