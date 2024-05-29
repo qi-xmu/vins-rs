@@ -10,7 +10,7 @@ use opencv::{calib3d::FM_RANSAC, core::*};
 
 /// 特征点信息 和 时间偏置
 #[derive(Debug, Default)]
-pub struct FeaturePerFrame(pub PointFeature, pub u64);
+pub struct FeaturePerFrame(pub PointFeature, pub i64);
 
 /// 特征点求解状态
 #[allow(dead_code)]
@@ -451,7 +451,7 @@ impl FeatureManager {
         &mut self,
         frame_count: usize,                // 当前帧数
         points_features: &PointFeatureMap, // 最新帧的所有特征点
-        td: u64,
+        td: i64,
     ) -> bool {
         let mut parallax_sum = 0.0;
         let mut parallax_num = 0;

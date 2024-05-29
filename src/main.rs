@@ -26,6 +26,7 @@ mod global_cast; // 全局转换
 mod global_types;
 mod pose_estimator;
 mod save;
+mod utility;
 
 use opencv::core::Mat;
 use opencv::highgui;

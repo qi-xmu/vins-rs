@@ -6,7 +6,7 @@ use crate::feature_trakcer::FeatureFrame;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct FramePointsSave {
-    timestamp: u64,
+    timestamp: i64,
     pub point_features: HashMap<i32, ((i32, i32), (f64, f64, f64))>,
 }
 

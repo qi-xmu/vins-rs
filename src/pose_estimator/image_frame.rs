@@ -1,13 +1,12 @@
 use crate::feature_trakcer::PointFeatureMap;
 
-#[derive(Debug, Default)]
-pub struct IntegrationBase();
+use super::integration_base::IntegrationBase;
 
 // TODO ImageFrame
 #[derive(Debug, Default)]
 pub struct ImageFrame {
     /// 时间戳
-    pub timestamp: u64,
+    pub timestamp: i64,
     /// 是否为关键帧
     pub is_key_frame: bool,
     /// 特征点
@@ -22,7 +21,7 @@ pub struct ImageFrame {
 
 impl ImageFrame {
     #[allow(dead_code)]
-    pub fn new(timestamp: u64, points: &PointFeatureMap) -> Self {
+    pub fn new(timestamp: i64, points: &PointFeatureMap) -> Self {
         Self {
             timestamp,
             points: points.clone(),

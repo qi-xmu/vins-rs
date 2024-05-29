@@ -3,20 +3,24 @@
 
 mod feature_manager;
 mod image_frame;
+mod integration_base;
 mod sfm;
+mod windows;
 
 use anyhow::Result;
+use integration_base::IntegrationBase;
 use std::collections::{HashMap, HashSet, VecDeque};
+use windows::{EstimatorIMUWindows, EstimatorImageWindows};
 
 use crate::feature_trakcer::FeatureFrame;
 use crate::global_types::IMUData;
+use crate::utility::Utility;
 use crate::{config::*, global_cast};
+use image_frame::ImageFrame;
 
 use feature_manager::FeatureManager;
 
 use opencv::core::{Mat, Point2d, Point3d, Vector};
-
-use self::image_frame::ImageFrame;
 
 #[allow(dead_code)]
 #[derive(Debug, Default)]
@@ -38,37 +42,10 @@ enum SolverFlag {
     Initial,
 }
 
-/// 根据帧号维护呀一个窗口大小为 [WINDOW_SIZE] 的时间戳窗口
-#[derive(Debug, Default)]
-struct EstimatorImageWindows {
-    pub timestamps: [u64; WINDOW_SIZE + 1],
-    // pub diff_times: [i64; WINDOW_SIZE + 1],
-    pub images: [Mat; WINDOW_SIZE + 1],
-    pub rot_mats: [nalgebra::Rotation3<f64>; WINDOW_SIZE + 1],
-    pub trans_vecs: [nalgebra::Vector3<f64>; WINDOW_SIZE + 1],
-    // pub vel_vecs: [nalgebra::Vector3<f64>; WINDOW_SIZE + 1],
-}
-
-impl EstimatorImageWindows {
-    pub fn forword(&mut self) {
-        for i in 0..WINDOW_SIZE {
-            self.timestamps.swap(i, i + 1);
-            self.images.swap(i, i + 1);
-            self.rot_mats.swap(i, i + 1);
-            self.trans_vecs.swap(i, i + 1);
-        }
-        self.timestamps[WINDOW_SIZE] = self.timestamps[WINDOW_SIZE - 1];
-        self.images[WINDOW_SIZE] = self.images[WINDOW_SIZE - 1].clone();
-        self.rot_mats[WINDOW_SIZE] = self.rot_mats[WINDOW_SIZE - 1];
-        self.trans_vecs[WINDOW_SIZE] = self.trans_vecs[WINDOW_SIZE - 1];
-    }
-
-    fn clear(&mut self) {
-        self.timestamps = [0; WINDOW_SIZE + 1];
-        // ? images
-        self.rot_mats = [nalgebra::Rotation3::identity(); WINDOW_SIZE + 1];
-        self.trans_vecs = [nalgebra::Vector3::zeros(); WINDOW_SIZE + 1];
-    }
+/// EstimatorWindowsTrait
+pub(crate) trait EstimatorWindowsTrait {
+    fn forword(&mut self);
+    fn clear(&mut self);
 }
 
 #[derive(Debug, Default)]
@@ -76,23 +53,26 @@ pub struct Estimator {
     /// 输入图像计数
     pub input_image_cnt: i32,
 
-    pub prev_time: u64,
-    pub cur_time: u64,
+    pub prev_time: i64,
+    pub cur_time: i64,
     /// td 校准时间
-    pub td: u64,
+    pub td: i64,
     /// 初始化时间
-    pub initial_timestamp: u64,
+    pub initial_timestamp: i64,
 
     // IMU buffer
     pub imu_buf: VecDeque<IMUData>,
+    first_imu: bool,
+    prev_imu: IMUData,
 
     /// 帧计数
     pub frame_count: usize,
 
     /* ? 窗口 是否可以合并成一个窗口, 不合并的问题：长度管理可能出问题 */
     image_window: EstimatorImageWindows,
+    imu_window: EstimatorIMUWindows,
     /// 时间戳窗口
-    // pub timestamps: VecDeque<u64>,
+    // pub timestamps: VecDeque<i64>,
     /// 时间间隔窗口
     // pub diff_times: VecDeque<f64>,
     /// ? 图像窗口, 缓冲的必要性？
@@ -101,24 +81,28 @@ pub struct Estimator {
     // pub rot_mats: VecDeque<nalgebra::Rotation3<f64>>,
     /// 平移向量窗口
     // pub trans_vecs: VecDeque<nalgebra::Vector3<f64>>,
-    /// 速度向量窗口
-    pub vel_vecs: VecDeque<nalgebra::Vector3<f64>>,
 
-    /// 加速度窗口
-    pub acce_vecs: VecDeque<nalgebra::Vector3<f64>>,
-    /// 角速度窗口
-    pub gyro_vecs: VecDeque<nalgebra::Vector3<f64>>,
-    /// 加速度偏置窗口
-    pub bias_acces: VecDeque<nalgebra::Vector3<f64>>,
-    /// 角速度偏置窗口
-    pub bias_gyros: VecDeque<nalgebra::Vector3<f64>>,
+    /// dt buffer
+    // pub dt_buf: VecDeque<f64>,
+    // /// 速度向量窗口
+    // pub vel_vecs: VecDeque<nalgebra::Vector3<f64>>,
+    // /// 加速度窗口
+    // pub acce_vecs: VecDeque<nalgebra::Vector3<f64>>,
+    // /// 角速度窗口
+    // pub gyro_vecs: VecDeque<nalgebra::Vector3<f64>>,
+    // /// 加速度偏置窗口
+    // pub bias_acces: VecDeque<nalgebra::Vector3<f64>>,
+    // /// 角速度偏置窗口
+    // pub bias_gyros: VecDeque<nalgebra::Vector3<f64>>,
+    // /// pre_integrations
+    // pub pre_integrations: VecDeque<PreIntegration>,
 
     /// body 到相机坐标系的变换
     pub imu_rot_to_cam: nalgebra::Rotation3<f64>, // ric
     pub imu_trans_to_cam: nalgebra::Vector3<f64>, // tic
 
     /// 时间戳和图像帧的映射
-    pub t_image_frame_map: HashMap<u64, ImageFrame>,
+    pub t_image_frame_map: HashMap<i64, ImageFrame>,
 
     /// 每一帧的特征点缓冲：包括时间戳，图像，该图像所有特征点。
     feature_frame_buf: VecDeque<FeatureFrame>,
@@ -131,7 +115,7 @@ pub struct Estimator {
     // pub key_poses: Vec<nalgebra::Vector3<f64>>,
 
     // time
-    latest_time: u64,
+    latest_time: i64,
     latest_vel: nalgebra::Vector3<f64>,
     latest_pos: nalgebra::Vector3<f64>,
     latest_quat: nalgebra::UnitQuaternion<f64>,
@@ -147,12 +131,14 @@ pub struct Estimator {
 impl Estimator {
     #[allow(dead_code)]
     pub fn new() -> Self {
-        Default::default()
+        let mut my = Estimator::default();
+        my.clear_state();
+        my
     }
 
     pub fn input_imu(
         &mut self,
-        timestamp: u64,
+        timestamp: i64,
         acce: &nalgebra::Vector3<f64>,
         gyro: &nalgebra::Vector3<f64>,
     ) -> Result<()> {
@@ -177,29 +163,22 @@ impl Estimator {
 
     fn fast_predict_imu(
         &mut self,
-        timestamp: u64,
+        timestamp: i64,
         acce: nalgebra::Vector3<f64>,
         gyro: nalgebra::Vector3<f64>,
     ) {
         // TODO fast_predict_imu
-        let dt = (timestamp - self.latest_time) as f64;
-        self.latest_time = timestamp;
-
-        let un_acc_0 =
-            self.latest_quat * (self.latest_acce - self.latest_bias_acce) - self.latest_gravity;
-        let un_gyro = (self.latest_gyro + gyro) * 0.5 - self.latest_bias_gyro;
+        // ! 以下 dt 单位为秒
+        let dt = (timestamp - self.latest_time) as f64 / 1e9;
 
         // 计算四元数变化量
-        let half_theta = un_gyro * dt * 0.5;
-        let delta_quat = nalgebra::UnitQuaternion::new_normalize(nalgebra::Quaternion::new(
-            1.0,
-            half_theta.x,
-            half_theta.y,
-            half_theta.z,
-        ));
+        let un_gyro = (self.latest_gyro + gyro) * 0.5 - self.latest_bias_gyro;
+        let delta_quat = Utility::delta_quat(un_gyro * dt);
         self.latest_quat = self.latest_quat * delta_quat;
 
         // 计算加速度
+        let un_acc_0 =
+            self.latest_quat * (self.latest_acce - self.latest_bias_acce) - self.latest_gravity;
         let un_arr_1 = self.latest_quat * (acce - self.latest_bias_acce) - self.latest_gravity;
         let un_acc = 0.5 * (un_acc_0 + un_arr_1);
 
@@ -210,6 +189,7 @@ impl Estimator {
         // 记录上一次的加速度和角速度
         self.latest_acce = acce;
         self.latest_gyro = gyro;
+        self.latest_time = timestamp;
     }
 
     pub fn input_feature(&mut self, feature_frame: &FeatureFrame) -> Result<()> {
@@ -326,6 +306,16 @@ impl Estimator {
             self.image_window.trans_vecs[i] = self.t_image_frame_map[&t].trans_vector;
             self.t_image_frame_map.get_mut(&t).unwrap().is_key_frame = true;
         }
+
+        for i in 0..WINDOW_SIZE + 1 {
+            if let Some(pre_integration) = self.imu_window.pre_integrations[i].as_mut() {
+                pre_integration.repropagate(
+                    nalgebra::Vector3::<f64>::zeros(),
+                    self.imu_window.bias_gyros[i],
+                );
+            }
+        }
+        // TODO
     }
     /// initial_structure
     fn initial_structure(&mut self) -> bool {
@@ -431,7 +421,7 @@ impl Estimator {
             false
         }
     }
-    fn process_image(&mut self, frame: &FeatureFrame, timestamp: u64) {
+    fn process_image(&mut self, frame: &FeatureFrame, timestamp: i64) {
         self.image_window.timestamps[self.frame_count] = timestamp;
         self.image_window.images[self.frame_count] = frame.image.clone();
 
@@ -447,7 +437,7 @@ impl Estimator {
         };
 
         let mut image_frame = image_frame::ImageFrame::new(timestamp, &frame.point_features);
-        image_frame.pre_integration = image_frame::IntegrationBase::default(); // FIXME:tmp_pre_integration
+        image_frame.pre_integration = IntegrationBase::default(); // FIXME:tmp_pre_integration
         self.t_image_frame_map.insert(timestamp, image_frame);
 
         // TODO ESTIMATE_EXTRINSIC == 2
@@ -524,11 +514,11 @@ impl Estimator {
     }
 
     #[inline]
-    fn imu_available(&self, t: u64) -> bool {
+    fn imu_available(&self, t: i64) -> bool {
         return true;
     }
 
-    fn wait_imu_available(&mut self, t: u64) {
+    fn wait_imu_available(&mut self, t: i64) {
         loop {
             if self.imu_available(t) {
                 //
@@ -541,7 +531,7 @@ impl Estimator {
         }
     }
 
-    fn get_imu_interval(&mut self, prev_time: u64, cur_time: u64) -> Option<Vec<IMUData>> {
+    fn get_imu_interval(&mut self, prev_time: i64, cur_time: i64) -> Option<Vec<IMUData>> {
         let mut imu_vecs = vec![];
         if !USE_IMU || self.imu_buf.is_empty() {
             return None;
@@ -589,6 +579,57 @@ impl Estimator {
         log::info!("rot0: {}", rot0);
     }
 
+    fn process_imu(&mut self, dt: i64, imu_unit: &IMUData) {
+        // TODO process_imu
+        if !self.first_imu {
+            self.first_imu = true;
+            self.prev_imu = imu_unit.clone();
+        }
+
+        // pre_integrations
+        if self.imu_window.pre_integrations[self.frame_count].is_none() {
+            self.imu_window.pre_integrations[self.frame_count].replace(IntegrationBase::new(
+                &self.prev_imu,
+                &self.imu_window.bias_acces[self.frame_count],
+                &self.imu_window.bias_gyros[self.frame_count],
+            ));
+        }
+
+        if self.frame_count != 0 {
+            let pre_integrations = self.imu_window.pre_integrations[self.frame_count]
+                .as_mut()
+                .unwrap();
+            pre_integrations.push_back(dt, imu_unit);
+            // tmp_pre_integration
+            self.imu_window.dt_buf[self.frame_count] = dt;
+            self.imu_window.acce_vecs[self.frame_count] = imu_unit.acc;
+            self.imu_window.gyro_vecs[self.frame_count] = imu_unit.gyro;
+
+            // ! 以下 dt 单位为秒
+            let dt = dt as f64 / 1e9;
+            let j = self.frame_count;
+            // 计算旋转矩阵
+            let un_gyro =
+                0.5 * (self.prev_imu.gyro + imu_unit.gyro) - self.imu_window.bias_gyros[j];
+            self.image_window.rot_mats[j] = self.image_window.rot_mats[j]
+                * Utility::delta_quat(un_gyro * dt).to_rotation_matrix();
+            // 计算加速度
+            let un_acce_0 = self.image_window.rot_mats[j]
+                * (self.prev_imu.acc - self.imu_window.bias_acces[j])
+                - self.latest_gravity;
+            let un_acce_1 = self.image_window.rot_mats[j]
+                * (imu_unit.acc - self.imu_window.bias_acces[j])
+                - self.latest_gravity;
+            let un_acce = 0.5 * (un_acce_0 + un_acce_1);
+            // 更新位置
+            self.image_window.trans_vecs[j] =
+                self.image_window.vel_vecs[j] * dt + 0.5 * un_acce * dt * dt;
+            // 更新速度
+            self.image_window.vel_vecs[j] = self.image_window.vel_vecs[j] + un_acce * dt;
+        }
+        self.prev_imu = imu_unit.to_owned();
+    }
+
     fn process_measurements(&mut self) {
         // TODO: process measurements
         loop {
@@ -612,8 +653,13 @@ impl Estimator {
                         self.init_first_imu_pose(&imu_vecs);
                     }
 
-                    for imu in imu_vecs.iter() {
-                        
+                    for (i, imu) in imu_vecs.iter().enumerate() {
+                        // 计算dt
+                        let dt = match i {
+                            0 => imu.timestamp - self.prev_time,
+                            _ => imu.timestamp - imu_vecs[i - 1].timestamp,
+                        };
+                        self.process_imu(dt, imu);
                     }
                 }
                 // TODO: process_image()
@@ -646,12 +692,7 @@ impl Estimator {
         self.frame_count = 0;
         // 图像
         self.image_window.clear();
-
-        self.vel_vecs.clear();
-        self.acce_vecs.clear();
-        self.gyro_vecs.clear();
-        self.bias_acces.clear();
-        self.bias_gyros.clear();
+        self.imu_window.clear();
 
         // TODO pre_integrations
 

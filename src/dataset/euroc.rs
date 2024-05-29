@@ -4,23 +4,23 @@ use super::DatasetTrait;
 
 #[derive(Debug, Default)]
 pub struct EuRoCDataset {
-    pub cam0s: Vec<(u64, String)>,
-    pub cam1s: Vec<(u64, String)>,
-    pub imu0s: Vec<(u64, [f64; 6])>, // t, gyro and acce
+    pub cam0s: Vec<(i64, String)>,
+    pub cam1s: Vec<(i64, String)>,
+    pub imu0s: Vec<(i64, [f64; 6])>, // t, gyro and acce
 }
 impl EuRoCDataset {
     const EUROC_CAM0_PATH: &'static str = "mav0/cam0/";
     const EUROC_CAM1_PATH: &'static str = "mav0/cam1/";
     const EUROC_IMU0_PATH: &'static str = "mav0/imu0/";
 
-    pub fn read_imu(path: &Path) -> Vec<(u64, [f64; 6])> {
+    pub fn read_imu(path: &Path) -> Vec<(i64, [f64; 6])> {
         let csv_path = path.join("data.csv");
         let mut reader = csv::Reader::from_path(csv_path).unwrap();
         reader
             .records()
             .map(|record| {
                 let record = record.unwrap();
-                let timestamp = record[0].parse::<u64>().unwrap();
+                let timestamp = record[0].parse::<i64>().unwrap();
                 let gyro_acce = [
                     record[1].parse::<f64>().unwrap(),
                     record[2].parse::<f64>().unwrap(),
@@ -33,7 +33,7 @@ impl EuRoCDataset {
             })
             .collect()
     }
-    pub fn read_cam(path: &Path) -> Vec<(u64, String)> {
+    pub fn read_cam(path: &Path) -> Vec<(i64, String)> {
         let csv_path = path.join("data.csv");
         let data_path = path.join("data");
         let mut reader = csv::Reader::from_path(csv_path).unwrap();
@@ -41,7 +41,7 @@ impl EuRoCDataset {
             .records()
             .map(|record| {
                 let record = record.unwrap();
-                let timestamp = record[0].parse::<u64>().unwrap();
+                let timestamp = record[0].parse::<i64>().unwrap();
                 let name = record[1].to_string();
                 let path = data_path.join(name).to_str().unwrap().to_string();
                 (timestamp, path)
@@ -68,7 +68,7 @@ impl EuRoCDataset {
 impl DatasetTrait for EuRoCDataset {
     //
 
-    fn read_t_cam0_list(&self) -> &Vec<(u64, String)> {
+    fn read_t_cam0_list(&self) -> &Vec<(i64, String)> {
         &self.cam0s
     }
 }
